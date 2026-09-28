@@ -1,0 +1,392 @@
+{
+  "name": "datalodestar",
+  "displayName": "DataLodestar — MySQL, PostgreSQL, MongoDB & Redis client",
+  "description": "Graphical database client for MySQL/MariaDB, PostgreSQL, MongoDB and Redis: browse databases, tables, collections and keys, inspect structure, run queries, SSH tunnels, auto/manual transactions.",
+  "version": "0.4.0",
+  "publisher": "dremsis",
+  "author": "dremsis",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/QuentinJost/DataLodestar.git"
+  },
+  "homepage": "https://github.com/QuentinJost/DataLodestar#readme",
+  "bugs": {
+    "url": "https://github.com/QuentinJost/DataLodestar/issues"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "sql",
+    "mysql",
+    "mariadb",
+    "postgresql",
+    "mongodb",
+    "redis",
+    "database",
+    "ssh"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:sql",
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dataLodestar",
+          "title": "DataLodestar",
+          "icon": "media/database.svg"
+        }
+      ]
+    },
+    "views": {
+      "dataLodestar": [
+        {
+          "id": "dataLodestar.connections",
+          "name": "Connections",
+          "icon": "media/database.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "dataLodestar.connections",
+        "contents": "No connection yet.\n[Add connection](command:dataLodestar.addConnection)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "dataLodestar.addConnection",
+        "title": "Add Connection",
+        "category": "DataLodestar",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dataLodestar.editConnection",
+        "title": "Edit Connection",
+        "category": "DataLodestar",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "dataLodestar.deleteConnection",
+        "title": "Delete Connection",
+        "category": "DataLodestar",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "dataLodestar.connect",
+        "title": "Connect",
+        "category": "DataLodestar",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "dataLodestar.disconnect",
+        "title": "Disconnect",
+        "category": "DataLodestar",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "dataLodestar.refresh",
+        "title": "Refresh",
+        "category": "DataLodestar",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "dataLodestar.newQuery",
+        "title": "New Query",
+        "category": "DataLodestar",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "dataLodestar.openTable",
+        "title": "Open Data",
+        "category": "DataLodestar",
+        "icon": "$(table)"
+      },
+      {
+        "command": "dataLodestar.showStructure",
+        "title": "Show Structure",
+        "category": "DataLodestar",
+        "icon": "$(symbol-structure)"
+      },
+      {
+        "command": "dataLodestar.copyName",
+        "title": "Copy Name",
+        "category": "DataLodestar"
+      },
+      {
+        "command": "dataLodestar.runStatement",
+        "title": "Run Statement at Cursor / Selection",
+        "category": "DataLodestar",
+        "icon": "$(play)"
+      },
+      {
+        "command": "dataLodestar.runScript",
+        "title": "Run Whole Script",
+        "category": "DataLodestar",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "dataLodestar.selectEditorConnection",
+        "title": "Select Connection / Database for Editor",
+        "category": "DataLodestar",
+        "icon": "$(database)"
+      },
+      {
+        "command": "dataLodestar.toggleTxMode",
+        "title": "Toggle Transaction Mode (Auto / Manual)",
+        "category": "DataLodestar",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "dataLodestar.commit",
+        "title": "Commit",
+        "category": "DataLodestar",
+        "icon": "$(check)"
+      },
+      {
+        "command": "dataLodestar.rollback",
+        "title": "Rollback",
+        "category": "DataLodestar",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "dataLodestar.transactionMenu",
+        "title": "Transaction…",
+        "category": "DataLodestar"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "dataLodestar.addConnection",
+          "when": "view == dataLodestar.connections",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dataLodestar.refresh",
+          "when": "view == dataLodestar.connections",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "dataLodestar.connect",
+          "when": "view == dataLodestar.connections && viewItem == connection.off",
+          "group": "inline@1"
+        },
+        {
+          "command": "dataLodestar.newQuery",
+          "when": "view == dataLodestar.connections && viewItem =~ /^(connection\\.on|database|redisdb)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "dataLodestar.disconnect",
+          "when": "view == dataLodestar.connections && viewItem =~ /^connection\\.on/",
+          "group": "inline@2"
+        },
+        {
+          "command": "dataLodestar.openTable",
+          "when": "view == dataLodestar.connections && viewItem =~ /^(table|view|collection|redisdb)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "dataLodestar.connect",
+          "when": "view == dataLodestar.connections && viewItem == connection.off",
+          "group": "1_conn@1"
+        },
+        {
+          "command": "dataLodestar.disconnect",
+          "when": "view == dataLodestar.connections && viewItem =~ /^connection\\.on/",
+          "group": "1_conn@2"
+        },
+        {
+          "command": "dataLodestar.newQuery",
+          "when": "view == dataLodestar.connections && viewItem =~ /^(connection|database)/",
+          "group": "2_query@1"
+        },
+        {
+          "command": "dataLodestar.toggleTxMode",
+          "when": "view == dataLodestar.connections && viewItem =~ /^connection/",
+          "group": "3_tx@1"
+        },
+        {
+          "command": "dataLodestar.commit",
+          "when": "view == dataLodestar.connections && viewItem == connection.on.pending",
+          "group": "3_tx@2"
+        },
+        {
+          "command": "dataLodestar.rollback",
+          "when": "view == dataLodestar.connections && viewItem == connection.on.pending",
+          "group": "3_tx@3"
+        },
+        {
+          "command": "dataLodestar.editConnection",
+          "when": "view == dataLodestar.connections && viewItem =~ /^connection/",
+          "group": "4_edit@1"
+        },
+        {
+          "command": "dataLodestar.deleteConnection",
+          "when": "view == dataLodestar.connections && viewItem =~ /^connection/",
+          "group": "4_edit@2"
+        },
+        {
+          "command": "dataLodestar.refresh",
+          "when": "view == dataLodestar.connections && viewItem =~ /^(connection\\.on|database|folder)/",
+          "group": "5_misc@1"
+        },
+        {
+          "command": "dataLodestar.openTable",
+          "when": "view == dataLodestar.connections && viewItem =~ /^(table|view|collection|redisdb)$/",
+          "group": "1_table@1"
+        },
+        {
+          "command": "dataLodestar.showStructure",
+          "when": "view == dataLodestar.connections && viewItem =~ /^(table|view|collection)$/",
+          "group": "1_table@2"
+        },
+        {
+          "command": "dataLodestar.newQuery",
+          "when": "view == dataLodestar.connections && viewItem =~ /^(table|view|collection|redisdb)$/",
+          "group": "1_table@3"
+        },
+        {
+          "command": "dataLodestar.copyName",
+          "when": "view == dataLodestar.connections && viewItem =~ /^(database|table|view|collection|column)$/",
+          "group": "9_copy@1"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "dataLodestar.runStatement",
+          "when": "(editorLangId == sql || dataLodestar.editorBound)",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dataLodestar.runScript",
+          "when": "(editorLangId == sql || dataLodestar.editorBound)",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "dataLodestar.openTable",
+          "when": "false"
+        },
+        {
+          "command": "dataLodestar.showStructure",
+          "when": "false"
+        },
+        {
+          "command": "dataLodestar.copyName",
+          "when": "false"
+        },
+        {
+          "command": "dataLodestar.runStatement",
+          "when": "(editorLangId == sql || dataLodestar.editorBound)"
+        },
+        {
+          "command": "dataLodestar.runScript",
+          "when": "(editorLangId == sql || dataLodestar.editorBound)"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "dataLodestar.runStatement",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && (editorLangId == sql || dataLodestar.editorBound)"
+      },
+      {
+        "command": "dataLodestar.runScript",
+        "key": "ctrl+shift+enter",
+        "mac": "cmd+shift+enter",
+        "when": "editorTextFocus && (editorLangId == sql || dataLodestar.editorBound)"
+      }
+    ],
+    "configuration": {
+      "title": "DataLodestar",
+      "properties": {
+        "dataLodestar.maxRows": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 1,
+          "description": "Maximum number of rows displayed for a query result in the results panel."
+        },
+        "dataLodestar.pageSize": {
+          "type": "number",
+          "default": 100,
+          "enum": [
+            50,
+            100,
+            200,
+            500,
+            1000
+          ],
+          "description": "Default page size of the table data viewer."
+        },
+        "dataLodestar.binaryDisplay": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "hex",
+            "uuid",
+            "uuidSwapped",
+            "text",
+            "base64"
+          ],
+          "enumDescriptions": [
+            "UUID when every value of the column is 16 bytes, hex otherwise",
+            "Hexadecimal (0x…)",
+            "UUID, standard byte order (16-byte values; others in hex)",
+            "UUID stored with MySQL UUID_TO_BIN(uuid, 1) (16-byte values; others in hex)",
+            "Bytes decoded as UTF-8 text",
+            "Base64"
+          ],
+          "description": "Default display of binary columns (BINARY, VARBINARY, BLOB, bytea). Each grid column can be switched from its header."
+        },
+        "dataLodestar.stopOnError": {
+          "type": "boolean",
+          "default": true,
+          "description": "Stop a multi-statement script at the first failing statement."
+        },
+        "dataLodestar.confirmDestructive": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ask for confirmation before UPDATE/DELETE without WHERE, DROP and TRUNCATE when the connection is in auto-commit mode. User setting only: a workspace cannot turn it off.",
+          "scope": "application"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "test": "tsc -p . && node --test \"out/test/*.test.js\"",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "acorn": "^8.18.0",
+    "ioredis": "^5.11.1",
+    "mongodb": "^6.21.0",
+    "mysql2": "^3.15.0",
+    "pg": "^8.16.0",
+    "ssh2": "^1.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/pg": "^8.15.0",
+    "@types/ssh2": "^1.15.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^4.0.0",
+    "typescript": "^5.9.0"
+  }
+}

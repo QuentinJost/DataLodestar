@@ -40,8 +40,11 @@ export interface SqlDriver extends BaseDriver {
   readonly family: 'sql';
   listTables(database: string): Promise<TableInfo[]>;
   describeTable(ref: TableRef): Promise<TableStructure>;
-  /** Runs a single statement in the session, against `database` when given. */
-  execute(sql: string, database: string | undefined): Promise<QueryResult>;
+  /**
+   * Runs a single statement in the session, against `database` when given. At most
+   * `maxRows` rows are kept (and read, where the engine allows); `truncated` says more existed.
+   */
+  execute(sql: string, database: string | undefined, maxRows?: number): Promise<QueryResult>;
   quoteIdent(name: string): string;
   qualifiedName(ref: TableRef): string;
 }

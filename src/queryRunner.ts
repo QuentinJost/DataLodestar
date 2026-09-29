@@ -193,10 +193,10 @@ export class QueryRunner {
         label: text,
         destructive: isDestructive(text),
         run: async () => {
-          const r = await d.execute(text, state.database);
+          const r = await d.execute(text, state.database, maxRows);
           const use = config.kind === 'mysql' ? MYSQL_USE.exec(text) : null;
           if (use) state.database = use[1].replace(/``/g, '`');
-          return trim(r, maxRows);
+          return r;
         },
       }));
     }
@@ -239,11 +239,6 @@ export class QueryRunner {
       };
     });
   }
-}
-
-function trim<T extends { rows: unknown[] }>(r: T, maxRows: number): T & { truncated: boolean } {
-  const truncated = r.rows.length > maxRows;
-  return { ...r, rows: truncated ? r.rows.slice(0, maxRows) : r.rows, truncated };
 }
 
 const flashDecoration = vscode.window.createTextEditorDecorationType({

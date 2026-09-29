@@ -379,11 +379,13 @@
     "mongodb": "^6.21.0",
     "mysql2": "^3.15.0",
     "pg": "^8.16.0",
+    "pg-cursor": "^2.22.0",
     "ssh2": "^1.17.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/pg": "^8.15.0",
+    "@types/pg-cursor": "^2.7.2",
     "@types/ssh2": "^1.15.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^4.0.0",

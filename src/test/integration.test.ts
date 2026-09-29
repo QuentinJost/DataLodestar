@@ -151,6 +151,38 @@ test('mysql: cancel aborts a running statement', { skip }, async () => {
   });
 });
 
+/** Runs a 2M-row statement capped at 1000 rows: bounded memory and time, session still usable. */
+async function assertBounded(d: SqlDriver, sql: string, database: string | undefined) {
+  global.gc?.();
+  const rss = process.memoryUsage().rss;
+  const started = Date.now();
+  const r = await d.execute(sql, database, 1000);
+  const elapsed = Date.now() - started;
+  const grown = (process.memoryUsage().rss - rss) / 1024 / 1024;
+  assert.equal(r.rows.length, 1000);
+  assert.equal(r.truncated, true);
+  assert.ok(elapsed < 2000, `took ${elapsed} ms`);
+  assert.ok(grown < 50, `RSS grew by ${grown.toFixed(1)} MB`);
+  assert.deepEqual((await d.execute('SELECT 1', database)).rows, [[1]], 'session still usable');
+  const small = await d.execute('SELECT 1 UNION ALL SELECT 2', database, 1000);
+  assert.equal(small.truncated, false);
+}
+
+test('mysql: a 2M-row SELECT keeps maxRows rows without buffering the rest', { skip }, async () => {
+  await withDriver('mysql', 'shop', async (d) => {
+    await d.execute('SET SESSION cte_max_recursion_depth = 3000000', 'shop');
+    await assertBounded(d, 'WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000000) SELECT i, REPEAT(\'x\', 100) FROM n', 'shop');
+  });
+});
+
+test('postgres: a 2M-row SELECT keeps maxRows rows without buffering the rest', { skip }, async () => {
+  await withDriver('postgres', undefined, async (d) => {
+    await d.setTxMode('manual');
+    await assertBounded(d, "SELECT i, repeat('x', 100) FROM generate_series(1, 2000000) i", undefined);
+    await d.rollback();
+  });
+});
+
 test('postgres: databases, schemas, structure, per-database manual transactions', { skip }, async () => {
   await withDriver('postgres', undefined, async (d) => {
     const existing = await d.execute("SELECT 1 FROM pg_database WHERE datname = 'analytics'", undefined);

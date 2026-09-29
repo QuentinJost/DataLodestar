@@ -1,10 +1,52 @@
 import { Client } from 'pg';
-import { ColumnInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
-import { Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, Mutex, normalizeValue } from './driver';
+import Cursor from 'pg-cursor';
+import { CellValue, ColumnInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
+import { Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, leadingKeyword, Mutex, normalizeValue } from './driver';
 
 const FK_ACTIONS: Record<string, string> = { a: 'NO ACTION', r: 'RESTRICT', c: 'CASCADE', n: 'SET NULL', d: 'SET DEFAULT' };
 
 type Row = Record<string, unknown>;
+
+/** Statements read through a cursor, which stops after `maxRows` rows; the rest are buffered. */
+const ROW_STATEMENTS = new Set(['select', 'with', 'values', 'table', 'show', 'explain']);
+
+interface CursorResult {
+  fields: { name: string }[];
+  rowCount: number | null;
+}
+
+/** Fetches one batch of `maxRows + 1` rows (the extra one tells truncation) and closes the portal. */
+function readCursor(client: Client, sql: string, maxRows: number): Promise<QueryResult> {
+  const cursor = client.query(new Cursor(sql, undefined, { rowMode: 'array' }));
+  const batch = Number.isFinite(maxRows) ? maxRows + 1 : 0;
+  return new Promise<QueryResult>((resolve, reject) => {
+    const rows: CellValue[][] = [];
+    const step = () =>
+      cursor.read(batch || 10000, (err: Error | undefined, got: unknown[][], result: CursorResult) => {
+        if (err) return reject(err);
+        for (const row of got) if (rows.length < maxRows) rows.push(row.map(normalizeValue));
+        const more = got.length === (batch || 10000);
+        if (more && !batch) return step();
+        const done = () => {
+          const fields = result.fields ?? [];
+          resolve(fields.length ? { columns: fields.map((f) => f.name), rows, truncated: got.length > maxRows, durationMs: 0 } : { columns: [], rows: [], affectedRows: result.rowCount ?? undefined, durationMs: 0 });
+        };
+        if (more) cursor.close((closeErr?: Error) => (closeErr ? reject(closeErr) : done()));
+        else done();
+      });
+    step();
+  });
+}
+
+async function buffered(client: Client, sql: string): Promise<QueryResult> {
+  const res = await client.query({ text: sql, rowMode: 'array' });
+  // Only `sql` with several statements returns an array; keep the last result.
+  const r = Array.isArray(res) ? res[res.length - 1] : res;
+  if (r.fields && r.fields.length > 0) {
+    return { columns: r.fields.map((f: { name: string }) => f.name), rows: (r.rows as unknown[][]).map((row) => row.map(normalizeValue)), durationMs: 0 };
+  }
+  return { columns: [], rows: [], affectedRows: r.rowCount ?? undefined, durationMs: 0 };
+}
 
 /**
  * PostgreSQL has no cross-database queries, so each database gets its own pair of
@@ -192,7 +234,7 @@ export class PostgresDriver implements SqlDriver {
     return { columns, indexes, foreignKeys, ddl };
   }
 
-  execute(sql: string, database: string | undefined): Promise<QueryResult> {
+  execute(sql: string, database: string | undefined, maxRows = Infinity): Promise<QueryResult> {
     const db = database || this.defaultDb;
     return this.lock.run(async () => {
       const client = await this.client(db, 'session');
@@ -203,15 +245,10 @@ export class PostgresDriver implements SqlDriver {
       const started = Date.now();
       this.running = client;
       try {
-        const res = await client.query({ text: sql, rowMode: 'array' });
-        const durationMs = Date.now() - started;
+        const result = ROW_STATEMENTS.has(leadingKeyword(sql)) ? await readCursor(client, sql, maxRows) : await buffered(client, sql);
+        result.durationMs = Date.now() - started;
         this.track(db, sql);
-        // Only `sql` with several statements returns an array; keep the last result.
-        const r = Array.isArray(res) ? res[res.length - 1] : res;
-        if (r.fields && r.fields.length > 0) {
-          return { columns: r.fields.map((f: { name: string }) => f.name), rows: (r.rows as unknown[][]).map((row) => row.map(normalizeValue)), durationMs };
-        }
-        return { columns: [], rows: [], affectedRows: r.rowCount ?? undefined, durationMs };
+        return result;
       } catch (err) {
         // A failed COMMIT/ROLLBACK still ends the transaction; a failed write aborts it
         // and PostgreSQL then needs a ROLLBACK, so it counts as pending.

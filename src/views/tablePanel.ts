@@ -180,7 +180,7 @@ export function sqlSource(sessions: SessionManager, connId: string, connName: st
       if (orderBy) sql += ` ORDER BY ${orderBy}`;
       assertSingleStatement(sql, d.kind);
       // One extra row tells whether a next page exists without a COUNT(*).
-      const r = await d.execute(`${sql} LIMIT ${limit + 1} OFFSET ${offset}`, table.database);
+      const r = await d.execute(`${sql} LIMIT ${limit + 1} OFFSET ${offset}`, table.database, limit + 1);
       sessions.emit(connId);
       return {
         columns: r.columns,

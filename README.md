@@ -180,8 +180,11 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
 
 ## Limitations
 
-- A query result is fetched whole, then trimmed to `maxRows` for display: add a `LIMIT` to huge
-  `SELECT`s. The data viewer always pages with `LIMIT`/`OFFSET`.
+- A query result stops at `maxRows` rows: the rest is not held in memory. A MySQL read-only
+  statement is then stopped on the server (`KILL QUERY`); other MySQL statements run to the end,
+  their extra rows dropped as they arrive. PostgreSQL reads `SELECT`, `WITH`, `VALUES`, `TABLE`,
+  `SHOW` and `EXPLAIN` through a cursor; other statements (such as `INSERT … RETURNING`) and a
+  MySQL `CALL` are read whole. The data viewer always pages with `LIMIT`/`OFFSET`.
 - Cells are read-only; edit data with `UPDATE` statements.
 - For a MySQL `CALL` returning several result sets, only the first is shown.
 - Redis Cluster and Sentinel are not supported (single server only). Values and query results are

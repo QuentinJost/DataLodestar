@@ -7,10 +7,17 @@ export type NavNode = ConnectionNode | DatabaseNode | FolderNode | TableNode | C
 
 export class ConnectionNode extends vscode.TreeItem {
   readonly kind = 'connection';
-  constructor(readonly config: ConnectionConfig, connected: boolean, pending: boolean, manual: boolean) {
+  constructor(readonly config: ConnectionConfig, readonly connected: boolean, pending: boolean, manual: boolean) {
     super(config.name, connected ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
     // The id changes with the connected flag so VS Code re-applies the collapsible state.
     this.id = `conn:${config.id}:${connected ? 'on' : 'off'}`;
+    this.update(pending, manual);
+  }
+
+  /** Transaction state shown on the node; changed in place so VS Code keeps the expanded children. */
+  update(pending: boolean, manual: boolean): void {
+    const config = this.config;
+    const connected = this.connected;
     const redis = config.kind === 'redis';
     const via = config.ssh?.enabled ? ` via ssh ${config.ssh.host}` : '';
     const where = config.uri ? redactUri(config.uri) : `${config.user ? `${config.user}@` : ''}${config.host}:${config.port}`;
@@ -148,14 +155,55 @@ export function redactUri(uri: string): string {
 export class NavigatorTree implements vscode.TreeDataProvider<NavNode> {
   private readonly changed = new vscode.EventEmitter<NavNode | undefined>();
   readonly onDidChangeTreeData = this.changed.event;
+  private readonly connections = new Map<string, ConnectionNode>();
+  /** Metadata per connection (databases, tables, collections, columns), keyed by what was listed. */
+  private readonly cache = new Map<string, Map<string, Promise<unknown>>>();
 
   constructor(private readonly store: ConnectionStore, private readonly sessions: SessionManager) {
     store.onDidChange(() => this.refresh());
-    sessions.onDidChange(() => this.refresh());
+    sessions.onDidChange((id) => this.onSessionChange(id));
+    sessions.onDidChangeSchema((id) => {
+      const node = this.connections.get(id);
+      if (node) this.refresh(node);
+      else this.cache.delete(id);
+    });
   }
 
+  /** Drops the cached metadata of the node's connection (all when no node) and redraws it. */
   refresh(node?: NavNode): void {
+    const connId = node ? ('config' in node ? node.config.id : 'connId' in node ? node.connId : undefined) : undefined;
+    if (connId) this.cache.delete(connId);
+    else this.cache.clear();
     this.changed.fire(node);
+  }
+
+  /**
+   * Connect / disconnect redraw the root; a mode or pending-transaction change only
+   * updates that connection's node, whose children come from the cache.
+   */
+  private onSessionChange(id: string): void {
+    const s = this.sessions.current(id);
+    if (!s) this.cache.delete(id);
+    const node = this.connections.get(id);
+    if (!node || node.connected !== !!s) {
+      this.changed.fire(undefined);
+      return;
+    }
+    node.update(!!s?.driver.pendingTransaction, (s?.txMode ?? node.config.txMode) === 'manual' && familyOf(node.config.kind) !== 'redis');
+    this.changed.fire(node);
+  }
+
+  private cached<T>(connId: string, key: string, load: () => Promise<T>): Promise<T> {
+    let entries = this.cache.get(connId);
+    if (!entries) this.cache.set(connId, (entries = new Map()));
+    let hit = entries.get(key) as Promise<T> | undefined;
+    if (!hit) {
+      hit = load();
+      entries.set(key, hit);
+      // A failure is shown once, then retried on the next expand.
+      hit.catch(() => this.cache.get(connId)?.get(key) === hit && this.cache.get(connId)!.delete(key));
+    }
+    return hit;
   }
 
   getTreeItem(node: NavNode): vscode.TreeItem {
@@ -164,18 +212,22 @@ export class NavigatorTree implements vscode.TreeDataProvider<NavNode> {
 
   async getChildren(node?: NavNode): Promise<NavNode[]> {
     if (!node) {
+      this.connections.clear();
       return this.store.list().map((c) => {
         const s = this.sessions.current(c.id);
-        return new ConnectionNode(c, !!s, !!s?.driver.pendingTransaction, (s?.txMode ?? c.txMode) === 'manual' && familyOf(c.kind) !== 'redis');
+        const n = new ConnectionNode(c, !!s, !!s?.driver.pendingTransaction, (s?.txMode ?? c.txMode) === 'manual' && familyOf(c.kind) !== 'redis');
+        this.connections.set(c.id, n);
+        return n;
       });
     }
     try {
       switch (node.kind) {
         case 'connection': {
-          const d = (await this.sessions.get(node.config.id)).driver;
-          const dbs = await d.listDatabases(node.config.showSystemDatabases);
+          const id = node.config.id;
+          const d = (await this.sessions.get(id)).driver;
+          const dbs = await this.cached(id, 'dbs', () => d.listDatabases(node.config.showSystemDatabases));
           if (d.family === 'redis') {
-            const counts = await d.keyspace();
+            const counts = await this.cached(id, 'keyspace', () => d.keyspace());
             const used = dbs.filter((db) => counts[db] || db === (node.config.database || '0'));
             const empty = dbs.filter((db) => !used.includes(db));
             return [...used.map((db) => new RedisDbNode(node.config.id, db, counts[db] ?? 0)), ...(empty.length ? [new RedisEmptyDbsNode(node.config.id, empty)] : [])];
@@ -187,14 +239,14 @@ export class NavigatorTree implements vscode.TreeDataProvider<NavNode> {
         case 'database': {
           const d = (await this.sessions.get(node.connId)).driver;
           if (d.family === 'mongo') {
-            const colls = await d.listCollections(node.database);
+            const colls = await this.cached(node.connId, `db:${node.database}`, () => d.listCollections(node.database));
             return [
               new FolderNode(node.connId, node.database, 'mongo', colls.filter((c) => c.type !== 'view'), 'Collections'),
               new FolderNode(node.connId, node.database, 'mongo', colls.filter((c) => c.type === 'view'), 'Views'),
             ];
           }
           if (d.family !== 'sql') return [];
-          const tables = await d.listTables(node.database);
+          const tables = await this.cached(node.connId, `db:${node.database}`, () => d.listTables(node.database));
           return [
             new FolderNode(node.connId, node.database, 'sql', tables.filter((t) => t.type === 'table'), 'Tables'),
             new FolderNode(node.connId, node.database, 'sql', tables.filter((t) => t.type === 'view'), 'Views'),
@@ -206,13 +258,13 @@ export class NavigatorTree implements vscode.TreeDataProvider<NavNode> {
         case 'table': {
           const d = (await this.sessions.get(node.connId)).driver;
           if (d.family !== 'sql') return [];
-          const structure = await d.describeTable(node.table);
+          const structure = await this.cached(node.connId, node.id!, () => d.describeTable(node.table));
           return structure.columns.map((c) => new ColumnNode(node.id!, c));
         }
         case 'collection': {
           const d = (await this.sessions.get(node.connId)).driver;
           if (d.family !== 'mongo') return [];
-          const s = await d.describeCollection(node.collection.database, node.collection.name);
+          const s = await this.cached(node.connId, node.id!, () => d.describeCollection(node.collection.database, node.collection.name));
           return s.fields.length ? s.fields.map((f) => new ColumnNode(node.id!, fieldAsColumn(f))) : [new MessageNode('No document to sample')];
         }
         default:

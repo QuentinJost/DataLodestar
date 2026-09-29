@@ -29,6 +29,9 @@ export class SessionManager implements vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<string>();
   /** Fires the connection id when connected / mode / pending-transaction state changes. */
   readonly onDidChange = this.changed.event;
+  private readonly schemaChanged = new vscode.EventEmitter<string>();
+  /** Fires the connection id after a statement that may add, drop or rename objects. */
+  readonly onDidChangeSchema = this.schemaChanged.event;
 
   constructor(private readonly store: ConnectionStore) {}
 
@@ -171,6 +174,10 @@ export class SessionManager implements vscode.Disposable {
     this.emit(id);
   }
 
+  notifySchemaChange(id: string): void {
+    this.schemaChanged.fire(id);
+  }
+
   /** Re-evaluates state after statements ran; fires only on an actual change. */
   emit(id: string): void {
     const s = this.sessions.get(id);
@@ -184,6 +191,7 @@ export class SessionManager implements vscode.Disposable {
     for (const s of this.sessions.values()) void s.close();
     this.sessions.clear();
     this.changed.dispose();
+    this.schemaChanged.dispose();
   }
 }
 

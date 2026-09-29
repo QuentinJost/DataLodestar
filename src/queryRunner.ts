@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ConnectionStore } from './connectionStore';
 import { AnyDriver } from './drivers';
 import { leadingKeyword } from './drivers/driver';
-import { createShellContext, evaluate, isDestructiveOp, MongoOp, splitScript } from './mongoShell';
+import { createShellContext, DDL_METHODS, evaluate, isDestructiveOp, MongoOp, splitScript } from './mongoShell';
 import { commandAt, isDestructiveCommand, splitCommands, tokenizeBuffers } from './redisCommand';
 import { Session, SessionManager } from './sessionManager';
 import { splitSql, statementAt } from './sqlSplitter';
@@ -20,11 +20,16 @@ const MYSQL_USE = /^\s*use\s+`?((?:[^`]|``)+?)`?\s*$/i;
 /** Editor language used for new query documents of each family. */
 export const QUERY_LANGUAGE = { sql: 'sql', mongo: 'javascript', redis: 'plaintext' } as const;
 
+/** Statements after which the tree lists objects again. */
+const SCHEMA_KEYWORDS = new Set(['create', 'drop', 'alter', 'rename']);
+
 interface Piece {
   /** Text shown in the results tab. */
   label: string;
   run: () => Promise<Omit<ResultItem, 'sql' | 'connection'>>;
   destructive: boolean;
+  /** May add, drop or rename objects shown in the tree. */
+  schema?: boolean;
   /** Error found before running (syntax, evaluation); shown in its tab. */
   error?: string;
 }
@@ -167,6 +172,7 @@ export class QueryRunner {
     );
     if (state.database !== binding.database) await this.setBinding(doc, { connId: binding.connId, database: state.database });
     this.sessions.emit(binding.connId);
+    if (pieces.slice(0, items.length).some((p) => p.schema)) this.sessions.notifySchemaChange(binding.connId);
     this.results.show(items);
   }
 
@@ -192,6 +198,7 @@ export class QueryRunner {
       return pick(splitSql(source, config.kind), (xs) => statementAt(xs, cursor!)).map(({ text }) => ({
         label: text,
         destructive: isDestructive(text),
+        schema: SCHEMA_KEYWORDS.has(leadingKeyword(text)),
         run: async () => {
           const r = await d.execute(text, state.database, maxRows);
           const use = config.kind === 'mysql' ? MYSQL_USE.exec(text) : null;
@@ -213,7 +220,7 @@ export class QueryRunner {
         }
         if (value instanceof MongoOp) {
           const op = value;
-          return [{ label: text, destructive: isDestructiveOp(op), run: () => d.runOp(op, state.database, maxRows) }];
+          return [{ label: text, destructive: isDestructiveOp(op), schema: DDL_METHODS.has(op.method), run: () => d.runOp(op, state.database, maxRows) }];
         }
         if (value === undefined) return []; // declarations, assignments to nothing
         return [{ label: text, destructive: false, run: async () => ({ columns: ['value'], rows: [[typeof value === 'object' ? JSON.stringify(value) : (value as string | number | boolean)]] }) }];

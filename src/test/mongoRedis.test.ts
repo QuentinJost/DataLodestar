@@ -98,3 +98,20 @@ test('redis: \\xHH is a raw byte, typed text is UTF-8', () => {
   const [, , v] = tokenizeBuffers('SET k "\\x80\\xffé"');
   assert.deepEqual([...v], [0x80, 0xff, 0xc3, 0xa9]);
 });
+
+test('redis scanAll: a 200,000-item batch does not overflow and stops at the wanted count', async () => {
+  const { scanAll } = await import('../drivers/redis');
+  const big = Array.from({ length: 200_000 }, (_, i) => Buffer.from(`m${i}`));
+  let calls = 0;
+  const client = {
+    callBuffer: async () => {
+      calls++;
+      return [Buffer.from(calls === 1 ? '42' : '0'), big];
+    },
+  };
+  const out = await scanAll(client as never, 'SSCAN', 'k', 1000);
+  assert.equal(out.length, 1000);
+  assert.equal(calls, 1, 'no round trip once enough items are in');
+  const all = await scanAll({ callBuffer: async () => [Buffer.from('0'), big] } as never, 'SSCAN', 'k', 500_000);
+  assert.equal(all.length, 200_000);
+});

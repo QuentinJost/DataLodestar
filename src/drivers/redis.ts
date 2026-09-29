@@ -125,7 +125,7 @@ export class RedisDriver implements BaseDriver {
         const args: (string | number)[] = [next, 'MATCH', pattern || '*', 'COUNT', SCAN_BATCH];
         if (type) args.push('TYPE', type);
         const [c, batch] = (await r.call('SCAN', ...args)) as [string, string[]];
-        names.push(...batch);
+        for (const name of batch) names.push(name);
         next = c;
         if (next === '0' || names.length >= wanted) break;
       }
@@ -257,13 +257,17 @@ export class RedisDriver implements BaseDriver {
   }
 }
 
-async function scanAll(r: Redis, cmd: 'HSCAN' | 'SSCAN', key: string, wanted: number): Promise<Buffer[]> {
+/** HSCAN / SSCAN until `wanted` items; items are pushed one by one (a spread of a huge batch overflows the stack). */
+export async function scanAll(r: Pick<Redis, 'callBuffer'>, cmd: 'HSCAN' | 'SSCAN', key: string, wanted: number): Promise<Buffer[]> {
   const out: Buffer[] = [];
   let cursor = '0';
   do {
     const [next, batch] = (await r.callBuffer(cmd, key, cursor, 'COUNT', SCAN_BATCH)) as [Buffer, Buffer[]];
-    out.push(...batch);
+    for (const item of batch) {
+      out.push(item);
+      if (out.length >= wanted) return out;
+    }
     cursor = next.toString();
-  } while (cursor !== '0' && out.length < wanted);
-  return out.slice(0, wanted);
+  } while (cursor !== '0');
+  return out;
 }

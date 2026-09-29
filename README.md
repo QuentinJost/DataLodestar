@@ -81,7 +81,8 @@ the progress notification (`KILL QUERY` / `pg_cancel_backend`).
 
 - The tree lists the databases holding keys (`db0 · 1,204 keys`); empty ones are grouped apart.
 - Clicking a database opens the key browser: **MATCH** pattern (`user:*`) and **TYPE** filter, keys
-  loaded 500 at a time with SCAN (never `KEYS`), then the selected key's type, size, TTL and value:
+  loaded 500 at a time with SCAN (never `KEYS`), up to 10,000 (then narrow the pattern), then the
+  selected key's type, size, TTL and value:
   text (JSON is pretty-printed), or a grid for hashes, lists, sets, sorted sets (with scores) and
   streams. Binary values follow the binary display formats below.
 - **New Query** opens a command editor: one command per line, redis-cli quoting (`"a b"`, `'it\'s'`,

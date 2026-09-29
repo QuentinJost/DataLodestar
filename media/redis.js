@@ -2,6 +2,8 @@
   const vscode = acquireVsCodeApi();
   const $ = (id) => document.getElementById(id);
   const saved = vscode.getState() || {};
+  /** Past this many keys, "Load more" stops: the pattern should be narrowed instead. */
+  const MAX_KEYS = 10000;
   let cursor = '0';
   let keys = [];
   let selected = saved.selected || null;
@@ -29,7 +31,21 @@
     vscode.postMessage({ type: 'scan', pattern: $('pattern').value.trim() || '*', keyType: $('type').value, cursor });
   }
 
-  function drawKeys() {
+  function keyRow(body, k) {
+    const tr = body.insertRow();
+    tr.className = 'clickable' + (k.key === selected ? ' current' : '');
+    tr.dataset.key = k.key;
+    [k.key, k.type, ttlText(k.ttl)].forEach((v) => (tr.insertCell().textContent = v));
+    tr.title = k.key;
+  }
+
+  /** Rebuilds the list; `added` only appends those rows to the one drawn. */
+  function drawKeys(added) {
+    const body = $('keys').querySelector('tbody');
+    if (added && body) {
+      added.forEach((k) => keyRow(body, k));
+      return;
+    }
     const t = document.createElement('table');
     t.className = 'grid keylist';
     const h = t.createTHead().insertRow();
@@ -38,22 +54,26 @@
       th.textContent = x;
       h.appendChild(th);
     });
-    const body = t.createTBody();
-    keys.forEach((k) => {
-      const tr = body.insertRow();
-      tr.className = 'clickable' + (k.key === selected ? ' current' : '');
-      [k.key, k.type, ttlText(k.ttl)].forEach((v) => (tr.insertCell().textContent = v));
-      tr.title = k.key;
-      tr.addEventListener('click', () => select(k.key));
+    const tbody = t.createTBody();
+    keys.forEach((k) => keyRow(tbody, k));
+    tbody.addEventListener('click', (e) => {
+      const tr = e.target.closest('tr');
+      if (tr && tr.dataset.key !== undefined) select(tr.dataset.key);
     });
     $('keys').replaceChildren(t);
     if (!keys.length) $('keys').innerHTML = '<div class="message">No key matches.</div>';
   }
 
+  /** Moves the highlight without redrawing the list. */
+  function markSelected() {
+    $('keys').querySelectorAll('tr.current').forEach((tr) => tr.classList.remove('current'));
+    $('keys').querySelectorAll('tr[data-key]').forEach((tr) => tr.dataset.key === selected && tr.classList.add('current'));
+  }
+
   function select(key) {
     selected = key;
     vscode.setState({ ...vscode.getState(), selected });
-    drawKeys();
+    markSelected();
     $('detailError').classList.add('hidden');
     $('detail').innerHTML = '<div class="message">Loading…</div>';
     vscode.postMessage({ type: 'value', key });
@@ -134,12 +154,22 @@
         if (selected) select(selected);
         break;
       case 'keys':
-        keys = msg.append ? keys.concat(msg.keys) : msg.keys;
+        if (msg.append) {
+          const added = msg.keys.slice(0, MAX_KEYS - keys.length);
+          for (const k of added) keys.push(k);
+          drawKeys(added);
+        } else {
+          keys = msg.keys.slice(0, MAX_KEYS);
+          drawKeys();
+        }
         cursor = msg.cursor;
+        const capped = keys.length >= MAX_KEYS && cursor !== '0';
         $('scan').disabled = false;
-        $('more').disabled = cursor === '0';
-        $('info').textContent = `${keys.length.toLocaleString()} key(s)${cursor === '0' ? ' — scan complete' : ' — more available'} · ${msg.durationMs} ms`;
-        drawKeys();
+        $('more').disabled = cursor === '0' || capped;
+        $('info').textContent =
+          `${keys.length.toLocaleString()} key(s)` +
+          (cursor === '0' ? ' — scan complete' : capped ? ` — list capped at ${MAX_KEYS.toLocaleString()}: refine the MATCH pattern` : ' — more available') +
+          ` · ${msg.durationMs} ms`;
         break;
       case 'scanError':
         $('scan').disabled = false;

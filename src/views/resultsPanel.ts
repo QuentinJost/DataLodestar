@@ -68,6 +68,7 @@ export class ResultsPanel {
     const settings = vscode.workspace.getConfiguration('dataLodestar');
     const binaryDisplay = settings.get<string>('binaryDisplay', 'auto');
     const csvEscapeFormulas = settings.get<boolean>('csvEscapeFormulas', true);
-    void this.panel?.webview.postMessage({ type: 'results', items, binaryDisplay, csvEscapeFormulas, restored });
+    const maxCellChars = settings.get<number>('maxCellChars', 500);
+    void this.panel?.webview.postMessage({ type: 'results', items, binaryDisplay, csvEscapeFormulas, maxCellChars, restored });
   }
 }

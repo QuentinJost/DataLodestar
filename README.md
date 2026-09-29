@@ -184,6 +184,7 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
 | `dataLodestar.maxRows` | 1000 | Rows displayed per query result |
 | `dataLodestar.csvEscapeFormulas` | true | Copy as CSV neutralises cells a spreadsheet would run as formulas |
 | `dataLodestar.pageSize` | 100 | Default page size of the data viewer |
+| `dataLodestar.maxCellChars` | 500 | Characters shown per grid cell (tooltip: 8× more) |
 | `dataLodestar.binaryDisplay` | auto | Default format of binary columns |
 | `dataLodestar.stopOnError` | true | Stop a script at the first failing statement |
 | `dataLodestar.confirmDestructive` | true | Confirm destructive statements in auto-commit |
@@ -200,6 +201,9 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   disconnect, or a `CREATE` / `DROP` / `ALTER` / `RENAME` (or a MongoDB DDL method) run from the
   editor. Objects created another way, or Redis key counts, show after a **Refresh**.
 - For a MySQL `CALL` returning several result sets, only the first is shown.
+- PostgreSQL opens one session per database; one left idle for 10 minutes, outside a transaction,
+  is closed and reopened on the next statement. A session that ran `SET`, `PREPARE`, `LISTEN`,
+  `DECLARE`, `LOAD`, `CREATE TEMP…`, `set_config()` or took an advisory lock stays open.
 - Redis Cluster and Sentinel are not supported (single server only). Values and query results are
   read-only in the viewers; change data with commands.
 - A MongoDB query can be cancelled only if the user may run `$currentOp` / `killOp`.

@@ -288,6 +288,28 @@ test('postgres: databases, schemas, structure, per-database manual transactions'
   });
 });
 
+test('postgres: idle sessions close unless they hold a transaction or state, and reopen on demand', { skip }, async () => {
+  const { PostgresDriver, SESSION_IDLE_MS } = await import('../drivers/postgres');
+  const d = new PostgresDriver(endpoint('postgres'));
+  await d.connect();
+  try {
+    await d.execute('SELECT 1', 'postgres');
+    await d.execute('SELECT 1', 'analytics');
+    await d.execute("SET application_name = 'kept'", 'analytics');
+    const later = Date.now() + SESSION_IDLE_MS + 1000;
+    assert.deepEqual(await d.closeIdleSessions(Date.now()), [], 'nothing idle yet');
+    assert.deepEqual(await d.closeIdleSessions(later), ['postgres'], 'the SET keeps analytics open');
+    assert.deepEqual((await d.execute('SELECT 2', 'postgres')).rows, [[2]], 'reopened lazily');
+    assert.deepEqual((await d.execute('SHOW application_name', 'analytics')).rows, [['kept']]);
+    await d.setTxMode('manual');
+    await d.execute('SELECT 3', 'postgres');
+    assert.deepEqual(await d.closeIdleSessions(Date.now() + SESSION_IDLE_MS + 1000), [], 'open transaction kept');
+    await d.rollback();
+  } finally {
+    await d.close();
+  }
+});
+
 test('ssh: tunnel with host key pinning to MySQL', { skip }, async () => {
   const cfg = { enabled: true, host: env.SSH_HOST!, port: 22, username: 'tunnel', auth: 'password' as const };
   const secrets = { sshPassword: env.SSH_PASSWORD };

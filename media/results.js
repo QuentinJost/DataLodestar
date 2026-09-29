@@ -8,6 +8,7 @@
   let active = 0;
   let binaryDefault = 'auto';
   let escapeFormulas = true;
+  let maxCell;
   let jsonView = !!saved.jsonView;
   /** Per column name, kept across runs so a re-run keeps the chosen format. */
   const binaryModes = saved.binaryModes || {};
@@ -16,6 +17,7 @@
   const gridOpts = () => ({
     binaryModes,
     binaryDefault,
+    maxCell,
     onBinaryMode: (column, mode) => {
       binaryModes[column] = mode;
       persist();
@@ -31,7 +33,8 @@
     return item.affectedRows !== undefined ? `${item.affectedRows} affected` : 'OK';
   }
 
-  function draw() {
+  /** Tab strip: rebuilt when the results change; a tab click only moves the highlight. */
+  function drawTabs() {
     tabs.replaceChildren();
     items.forEach((item, i) => {
       const b = document.createElement('button');
@@ -41,12 +44,16 @@
       b.addEventListener('click', () => {
         active = i;
         persist();
+        tabs.querySelectorAll('.tab').forEach((t, j) => t.classList.toggle('active', j === i));
         draw();
       });
       tabs.appendChild(b);
     });
     tabs.classList.toggle('hidden', items.length < 2);
+  }
 
+  /** Status line and content pane of the active tab. */
+  function draw() {
     const item = items[active];
     status.replaceChildren();
     content.replaceChildren();
@@ -111,11 +118,13 @@
       items = e.data.items;
       binaryDefault = e.data.binaryDisplay || 'auto';
       escapeFormulas = e.data.csvEscapeFormulas !== false;
+      maxCell = e.data.maxCellChars;
       const firstError = items.findIndex((x) => x.error);
       const lastGrid = items.map((x) => x.columns.length > 0).lastIndexOf(true);
       const restoredTab = e.data.restored && saved.active < items.length ? saved.active : undefined;
       active = restoredTab ?? (firstError >= 0 ? firstError : lastGrid >= 0 ? lastGrid : items.length - 1);
       persist();
+      drawTabs();
       draw();
     }
   });

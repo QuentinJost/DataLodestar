@@ -123,6 +123,7 @@ export class TablePanel {
           tab: this.requestedTab,
           pageSize: settings.get<number>('pageSize', 100),
           binaryDisplay: settings.get<string>('binaryDisplay', 'auto'),
+          maxCellChars: settings.get<number>('maxCellChars', 500),
           labels: this.source.labels,
           sortStyle: this.source.sortStyle,
         });

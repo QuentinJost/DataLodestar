@@ -8,6 +8,7 @@
   let keys = [];
   let selected = saved.selected || null;
   let binaryDefault = 'auto';
+  let maxCell;
   const binaryModes = {};
 
   const quoteArg = (k) => (/^[^\s"'\\]+$/.test(k) ? k : '"' + k.replace(/[\\"]/g, (c) => '\\' + c).replace(/\n/g, '\\n') + '"');
@@ -114,6 +115,7 @@
       SqlGrid.render(detail, v.columns, v.rows, {
         binaryModes,
         binaryDefault,
+        maxCell,
         onBinaryMode: (c, m) => {
           binaryModes[c] = m;
           drawValue(v);
@@ -148,6 +150,7 @@
     switch (msg.type) {
       case 'init':
         binaryDefault = msg.binaryDisplay || 'auto';
+        maxCell = msg.maxCellChars;
         if (saved.pattern) $('pattern').value = saved.pattern;
         if (saved.keyType) $('type').value = saved.keyType;
         scan(true);

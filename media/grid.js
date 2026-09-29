@@ -1,7 +1,9 @@
 // Shared result grid for the results and table webviews.
 (function () {
   const SqlBinary = typeof window !== 'undefined' ? window.SqlBinary : require('./binaryFormat.js');
+  /** Characters shown in a cell; its tooltip holds up to TITLE_FACTOR times more. */
   const MAX_CELL = 500;
+  const TITLE_FACTOR = 8;
 
   /** Text of a cell as shown, copied and exported; `mode` applies to binary cells. */
   function display(value, mode) {
@@ -9,15 +11,16 @@
     return SqlBinary.isBinary(value) ? SqlBinary.format(value, mode) : String(value);
   }
 
-  function formatCell(td, value, mode) {
+  function formatCell(td, value, mode, maxCell) {
     if (value === null) {
       td.innerHTML = '<span class="null">NULL</span>';
       return;
     }
     const text = display(value, mode);
     if (SqlBinary.isBinary(value)) td.classList.add('bin');
-    td.textContent = text.length > MAX_CELL ? text.slice(0, MAX_CELL) + '…' : text;
-    if (text.length > 40 || text.includes('\n')) td.title = text.length > 4000 ? text.slice(0, 4000) + '…' : text;
+    const maxTitle = maxCell * TITLE_FACTOR;
+    td.textContent = text.length > maxCell ? text.slice(0, maxCell) + '…' : text;
+    if (text.length > 40 || text.includes('\n')) td.title = text.length > maxTitle ? text.slice(0, maxTitle) + '…' : text;
     if (typeof value === 'number') td.classList.add('num');
   }
 
@@ -29,10 +32,12 @@
    * opts.binaryModes    { column: mode } chosen by the user
    * opts.binaryDefault  mode for columns not in binaryModes ("auto" by default)
    * opts.onBinaryMode   (column, mode) => void; shows a format picker on binary columns
+   * opts.maxCell        characters shown per cell (dataLodestar.maxCellChars)
    */
   function render(container, columns, rows, opts) {
     opts = opts || {};
     const modes = columnModes(columns, rows, opts);
+    const maxCell = opts.maxCell > 0 ? opts.maxCell : MAX_CELL;
     const table = document.createElement('table');
     table.className = 'grid';
     const head = table.createTHead().insertRow();
@@ -62,7 +67,7 @@
       num.textContent = String(offset + r + 1);
       row.forEach((value, c) => {
         const td = tr.insertCell();
-        formatCell(td, value, modes[c]);
+        formatCell(td, value, modes[c], maxCell);
         td.dataset.r = String(r);
         td.dataset.c = String(c);
       });

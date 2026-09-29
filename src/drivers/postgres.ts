@@ -8,6 +8,15 @@ const FK_ACTIONS: Record<string, string> = { a: 'NO ACTION', r: 'RESTRICT', c: '
 
 type Row = Record<string, unknown>;
 
+/** A per-database session left idle this long is closed, unless it holds state. */
+export const SESSION_IDLE_MS = 10 * 60 * 1000;
+
+/** Leaves something behind in the session (settings, temp objects, locks): never closed when idle. */
+export const holdsSessionState = (sql: string) =>
+  ['set', 'prepare', 'listen', 'declare', 'load'].includes(leadingKeyword(sql)) ||
+  (leadingKeyword(sql) === 'create' && /^\s*create\s+(global\s+|local\s+)?temp(orary)?\b/i.test(sql)) ||
+  /\b(pg_advisory_lock|pg_advisory_xact_lock|set_config)\s*\(/i.test(sql);
+
 /** Statements read through a cursor, which stops after `maxRows` rows; the rest are buffered. */
 const ROW_STATEMENTS = new Set(['select', 'with', 'values', 'table', 'show', 'explain']);
 
@@ -68,6 +77,11 @@ export class PostgresDriver implements SqlDriver {
   private readonly dirtyTx = new Set<string>();
   private readonly defaultDb: string;
   private running?: Client;
+  /** Last statement time per database session, for the idle sweep. */
+  private readonly lastUsed = new Map<string, number>();
+  /** Databases whose session holds state (see holdsSessionState): kept open. */
+  private readonly stateful = new Set<string>();
+  private sweeper?: NodeJS.Timeout;
   private mode: TxMode = 'auto';
   private readonly lock = new Mutex();
 
@@ -81,6 +95,23 @@ export class PostgresDriver implements SqlDriver {
 
   async connect(): Promise<void> {
     await this.client(this.defaultDb, 'meta');
+    this.sweeper = setInterval(() => void this.closeIdleSessions(), 60_000);
+    this.sweeper.unref();
+  }
+
+  /** Closes sessions idle for SESSION_IDLE_MS with no transaction and no state; reopened on the next statement. */
+  closeIdleSessions(now = Date.now()): Promise<string[]> {
+    return this.lock.run(async () => {
+      const closed: string[] = [];
+      for (const [db, client] of [...this.sessions]) {
+        if (this.openTx.has(db) || this.stateful.has(db) || now - (this.lastUsed.get(db) ?? now) < SESSION_IDLE_MS) continue;
+        this.sessions.delete(db);
+        this.lastUsed.delete(db);
+        closed.push(db);
+        await client.end().catch(() => undefined);
+      }
+      return closed;
+    });
   }
 
   private async client(database: string, role: 'session' | 'meta'): Promise<Client> {
@@ -100,10 +131,14 @@ export class PostgresDriver implements SqlDriver {
     });
     await client.connect();
     client.on('error', (err) => {
+      // A client closed on purpose (idle sweep) is no longer in the pool: nothing was lost.
+      if (pool.get(database) !== client) return;
       pool.delete(database);
       if (role === 'session') {
         this.openTx.delete(database);
         this.dirtyTx.delete(database);
+        this.stateful.delete(database);
+        this.lastUsed.delete(database);
         this.onLost?.(err);
       }
     });
@@ -112,6 +147,9 @@ export class PostgresDriver implements SqlDriver {
   }
 
   async close(): Promise<void> {
+    clearInterval(this.sweeper);
+    this.lastUsed.clear();
+    this.stateful.clear();
     const all = [...this.sessions.values(), ...this.metas.values()];
     this.sessions.clear();
     this.metas.clear();
@@ -239,6 +277,8 @@ export class PostgresDriver implements SqlDriver {
     const db = database || this.defaultDb;
     return this.lock.run(async () => {
       const client = await this.client(db, 'session');
+      this.lastUsed.set(db, Date.now());
+      if (holdsSessionState(sql)) this.stateful.add(db);
       if (this.mode === 'manual' && !this.openTx.has(db) && !isTxBegin(sql) && !isTxControl(sql)) {
         await client.query('BEGIN');
         this.openTx.add(db);

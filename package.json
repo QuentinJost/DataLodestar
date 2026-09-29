@@ -332,6 +332,13 @@
           ],
           "description": "Default page size of the table data viewer."
         },
+        "dataLodestar.maxCellChars": {
+          "type": "number",
+          "default": 500,
+          "minimum": 20,
+          "maximum": 100000,
+          "description": "Characters shown in a grid cell before it is cut with …; its tooltip holds up to 8 times more. Lower it for tables of long texts."
+        },
         "dataLodestar.binaryDisplay": {
           "type": "string",
           "default": "auto",

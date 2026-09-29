@@ -1,5 +1,6 @@
 import { Binary, BSON, ClientSession, Decimal128, Document, Long, MongoClient, MongoClientOptions, ObjectId, Sort } from 'mongodb';
-import { DDL_METHODS, evaluateObject, MongoOp, WRITE_METHODS } from '../mongoShell';
+import { parseFilter } from '../filterParser';
+import { DDL_METHODS, MongoOp, WRITE_METHODS } from '../mongoShell';
 import { splitUriPassword } from '../uriCredentials';
 import { CellValue, CollectionInfo, CollectionStructure, FieldInfo, QueryResult, TxMode } from '../types';
 import { BaseDriver, BINARY_LIMIT, Endpoint, Mutex } from './driver';
@@ -120,10 +121,10 @@ export class MongoDriver implements BaseDriver {
     return { sampled: sample.length, fields, indexes, options };
   }
 
-  /** Collection viewer page. Filter and sort are shell object literals. */
+  /** Collection viewer page. Filter and sort are shell object literals, parsed, never run. */
   find(database: string, collection: string, filterText: string, sortText: string, limit: number, skip: number): Promise<QueryResult> {
-    const filter = evaluateObject(filterText);
-    const sort = evaluateObject(sortText);
+    const filter = parseFilter(filterText);
+    const sort = parseFilter(sortText);
     return this.inSession(false, async (session) => {
       const started = Date.now();
       const docs = await this.client!.db(database).collection(collection).find(filter, { sort: sort as Sort, skip, limit, session }).toArray();
@@ -132,7 +133,7 @@ export class MongoDriver implements BaseDriver {
   }
 
   count(database: string, collection: string, filterText: string): Promise<number> {
-    const filter = evaluateObject(filterText);
+    const filter = parseFilter(filterText);
     return this.inSession(false, (session) => this.client!.db(database).collection(collection).countDocuments(filter, { session }));
   }
 

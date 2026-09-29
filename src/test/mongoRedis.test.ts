@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { ObjectId } from 'mongodb';
-import { createShellContext, evaluate, evaluateObject, isDestructiveOp, MongoOp, splitScript } from '../mongoShell';
+import { createShellContext, evaluate, isDestructiveOp, MongoOp, splitScript } from '../mongoShell';
 import { commandAt, isDestructiveCommand, splitCommands, tokenize } from '../redisCommand';
 
 test('mongo: splits top-level statements, semicolons optional', () => {
@@ -48,11 +48,15 @@ test('mongo: BSON helpers produce driver types', () => {
   assert.equal(filter.at.$gte.toISOString(), '2026-01-01T00:00:00.000Z');
 });
 
-test('mongo: viewer filters are object literals', () => {
-  assert.deepEqual(evaluateObject(''), {});
-  assert.deepEqual(evaluateObject("{ status: 'active', n: { $in: [1, 2] } }"), { status: 'active', n: { $in: [1, 2] } });
-  assert.throws(() => evaluateObject('[1, 2]'), /Expected an object/);
-  assert.throws(() => evaluateObject('while (true) {}'));
+test('mongo: editor scripts use the context\'s own Date, Math and JSON, converted for the driver', () => {
+  const ctx = createShellContext();
+  const op = evaluate("db.a.find({ at: { $lt: new Date(Date.UTC(2026, 0, 1)) }, n: Math.max(1, 2), j: JSON.parse('{\"x\":1}') })", ctx) as MongoOp;
+  const f = op.args[0] as { at: { $lt: Date }; n: number; j: { x: number } };
+  assert.ok(f.at.$lt instanceof Date, 'host-realm Date for the BSON serializer');
+  assert.equal(f.at.$lt.toISOString(), '2026-01-01T00:00:00.000Z');
+  assert.equal(f.n, 2);
+  assert.deepEqual(f.j, { x: 1 });
+  assert.notEqual(evaluate('Date', ctx), Date, 'not the extension host Date');
 });
 
 test('mongo: destructive operations', () => {

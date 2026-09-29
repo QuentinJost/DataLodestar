@@ -127,13 +127,16 @@ function dbProxy(database: string | undefined): unknown {
   });
 }
 
-/** Shell globals: the recording `db` plus the usual BSON constructors. */
+/**
+ * Shell globals: the recording `db` plus the usual BSON constructors. The context's
+ * own Date, Math and JSON are used (not the extension's); this is still not a
+ * sandbox: the helpers are extension functions, and scripts run with its rights.
+ */
 export function createShellContext(): vm.Context {
   return vm.createContext({
     db: dbProxy(undefined),
     ObjectId: (hex?: string) => (hex === undefined ? new ObjectId() : new ObjectId(hex)),
     ISODate: (s?: string) => (s === undefined ? new Date() : new Date(s)),
-    Date,
     NumberLong: (v: unknown) => Long.fromString(String(v)),
     NumberInt: (v: unknown) => new Int32(Number(v)),
     NumberDecimal: (v: unknown) => Decimal128.fromString(String(v)),
@@ -143,8 +146,6 @@ export function createShellContext(): vm.Context {
     Timestamp: (t: number, i: number) => new Timestamp({ t, i }),
     MinKey: () => new MinKey(),
     MaxKey: () => new MaxKey(),
-    Math,
-    JSON,
   });
 }
 
@@ -155,14 +156,6 @@ export function evaluate(statement: string, context: vm.Context): unknown {
   const value = vm.runInContext(statement, context, { timeout: SYNC_TIMEOUT_MS });
   if (value && typeof value === 'object' && '__op' in value) return (value as { __op: MongoOp }).__op;
   return value instanceof MongoOp ? value : toHostRealm(value);
-}
-
-/** Evaluates a filter / sort / projection object typed in the collection viewer. */
-export function evaluateObject(text: string, context: vm.Context = createShellContext()): Record<string, unknown> {
-  if (!text.trim()) return {};
-  const value = vm.runInContext(`(${text}\n)`, context, { timeout: SYNC_TIMEOUT_MS });
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Expected an object like { field: value }, got: ${text}`);
-  return toHostRealm(value) as Record<string, unknown>;
 }
 
 const isEmptyFilter = (f: unknown) => f === undefined || (typeof f === 'object' && f !== null && Object.keys(f).length === 0);

@@ -47,7 +47,7 @@ the progress notification (`KILL QUERY` / `pg_cancel_backend`).
 - The tree lists databases, then **Collections** and **Views**; expanding a collection shows its
   fields, inferred from a random sample of 200 documents (types and share of documents holding them).
 - Clicking a collection opens the viewer with **FILTER** and **SORT** instead of WHERE and ORDER BY.
-  Both take shell syntax: `{ status: 'active', createdAt: { $gte: ISODate('2026-01-01') } }`,
+  Both take shell object syntax: `{ status: 'active', createdAt: { $gte: ISODate('2026-01-01') } }`,
   `{ createdAt: -1 }`, `{ _id: ObjectId('…') }`. Clicking a header sorts on that field. **JSON**
   switches the grid to the documents as Extended JSON. The Structure tab shows the sampled fields,
   the indexes and the collection options (validator…).
@@ -159,8 +159,13 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
 - A password typed inside a MongoDB connection string is moved to the keychain when saving, and the
   string is stored without it. Saving is refused if passwords are not saved for that connection.
   Connections saved by an earlier version are cleaned the same way at startup.
-- MongoDB scripts and the viewer's FILTER / SORT are evaluated in-process with Node's `vm`, like
-  mongosh runs your code: it is not a sandbox. Run only scripts you trust.
+- The viewer's FILTER / SORT are parsed, never run: only object literals, arrays, strings,
+  numbers, booleans, `null`, regular expressions and the helpers listed above are accepted (no
+  variables, calls to anything else, member access or template literals), so a pasted filter cannot
+  run code.
+- MongoDB scripts in the query editor are evaluated in-process with Node's `vm`, like mongosh runs
+  your code. It is not a sandbox: a script runs with the extension's privileges (files, network,
+  processes). Run only scripts you trust.
 - **Copy as CSV** quotes a cell starting with `=`, `+`, `-`, `@`, tab or CR and prefixes it with
   `'`, so a spreadsheet does not run it as a formula (plain numbers such as `-1` are kept as they
   are). Set `dataLodestar.csvEscapeFormulas` to `false` for raw output. Double-clicking a cell

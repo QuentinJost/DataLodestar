@@ -32,7 +32,7 @@
     $('sslVerifyRow').classList.toggle('hidden', !ssl);
     $('sslCaRow').classList.toggle('hidden', !ssl || !$('sslVerify').checked);
     $('sslNameRow').classList.toggle('hidden', !ssl || !$('sslVerify').checked);
-    $('sslServerName').placeholder = ssh ? 'name in the certificate: the tunnel dials 127.0.0.1' : 'optional; default: the host above';
+    $('sslServerName').placeholder = ssh ? 'name in the certificate, if not the host above (often 127.0.0.1 via SSH)' : 'optional; default: the host above';
     $('kindHint').textContent = HINTS[kind];
     $('sshFields').classList.toggle('hidden', !ssh);
     const auth = $('sshAuth').value;

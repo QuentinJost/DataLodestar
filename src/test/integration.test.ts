@@ -23,6 +23,20 @@ const endpoint = (kind: DbKind, database?: string) => ({
   ssl: false,
 });
 
+/** TCP ports this container listens on, from /proc (Docker's own DNS resolver included: compare before / after). */
+function listeningTcpPorts(): number[] {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { readFileSync } = require('fs');
+  const ports: number[] = [];
+  for (const file of ['/proc/net/tcp', '/proc/net/tcp6']) {
+    for (const line of String(readFileSync(file)).split('\n').slice(1)) {
+      const cols = line.trim().split(/\s+/);
+      if (cols[3] === '0A') ports.push(parseInt(cols[1].split(':')[1], 16));
+    }
+  }
+  return ports;
+}
+
 async function withDriver(kind: DbKind, database: string | undefined, fn: (d: SqlDriver) => Promise<void>) {
   const d = createDriver(kind, endpoint(kind, database)) as SqlDriver;
   await d.connect();
@@ -333,11 +347,31 @@ test('ssh: tunnel with host key pinning to MySQL', { skip }, async () => {
   });
   assert.match(tunnel.fingerprint, /^SHA256:/);
   assert.deepEqual(seen, [undefined], 'unknown key asked once');
-  const d = createDriver('mysql', { ...endpoint('mysql', 'shop'), host: '127.0.0.1', port: tunnel.localPort }) as SqlDriver;
+  const baseline = listeningTcpPorts();
+  const d = createDriver('mysql', { ...endpoint('mysql', 'shop'), stream: () => tunnel.connect() }) as SqlDriver;
   await d.connect();
   assert.ok((await d.listDatabases(false)).includes('shop'));
   assert.deepEqual((await d.execute('SELECT 40 + 2', 'shop')).rows, [[42]]);
+  assert.deepEqual(listeningTcpPorts(), baseline, 'no local port opened for the tunnel');
   await d.close();
+
+  // TLS inside the SSH channel, checked against the real server name.
+  const { X509Certificate } = await import('crypto');
+  const { readFileSync } = await import('fs');
+  const cn = /CN=([^\n,]+)/.exec(new X509Certificate(readFileSync(env.MYSQL_CA!, 'utf8')).subject)![1].replace('_CA_', '_Server_');
+  const tlsOver = createDriver('mysql', { ...endpoint('mysql', 'shop'), ssl: true, sslVerify: true, sslCaPath: env.MYSQL_CA, sslServerName: cn, stream: () => tunnel.connect() }) as SqlDriver;
+  await tlsOver.connect();
+  assert.deepEqual((await tlsOver.execute("SHOW SESSION STATUS LIKE 'Ssl_version'", 'shop')).rows[0][1] !== '', true, 'encrypted');
+  await tlsOver.close();
+
+  const pg = createDriver('postgres', { ...endpoint('postgres'), stream: () => pgTunnel.connect() }) as SqlDriver;
+  const pgTunnel = await SshTunnel.open({ ...cfg, hostFingerprint: tunnel.fingerprint }, secrets, env.PG_HOST!, 5432, async () => false);
+  await pg.connect();
+  assert.deepEqual((await pg.execute('SELECT 40 + 2 AS n', undefined)).rows, [[42]]);
+  assert.deepEqual((await pg.execute('SELECT 1', 'analytics')).rows, [[1]], 'a second database opens a second channel');
+  assert.deepEqual(listeningTcpPorts(), baseline);
+  await pg.close();
+  pgTunnel.close();
   tunnel.close();
 
   // Known key: no prompt.

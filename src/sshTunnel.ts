@@ -1,9 +1,10 @@
 import { createHash } from 'crypto';
-import { readFileSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { createServer, Server, Socket } from 'net';
-import { homedir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { join } from 'path';
-import { Client, ConnectConfig } from 'ssh2';
+import { Duplex } from 'stream';
+import { Client, ClientChannel, ConnectConfig } from 'ssh2';
 import { ConnectionSecrets, SshConfig } from './types';
 
 /** Decides whether an unknown or changed host key may be trusted. */
@@ -11,18 +12,27 @@ export type HostKeyCheck = (fingerprint: string, expected: string | undefined) =
 
 const DEFAULT_KEYS = ['id_ed25519', 'id_ecdsa', 'id_rsa'];
 
+/** Where a driver that cannot take a stream connects: a Unix socket path (port 0) or 127.0.0.1:port. */
+export interface LocalEndpoint {
+  host: string;
+  port: number;
+}
+
 /**
- * Local TCP listener on 127.0.0.1 whose connections are forwarded through an SSH
- * session to `dstHost:dstPort` (as seen from the SSH server).
+ * An SSH session forwarding to `dstHost:dstPort` (as seen from the SSH server).
+ * Drivers that accept a stream get one channel per connection (`connect`), so no
+ * port is opened on this machine. `listen` is for the others (MongoDB).
  */
 export class SshTunnel {
   private closed = false;
+  private server?: Server;
+  private socketDir?: string;
   onClose?: () => void;
 
   private constructor(
     private readonly ssh: Client,
-    private readonly server: Server,
-    readonly localPort: number,
+    private readonly dstHost: string,
+    private readonly dstPort: number,
     readonly fingerprint: string,
   ) {}
 
@@ -64,29 +74,54 @@ export class SshTunnel {
       ssh.connect(options);
     });
 
-    const server = createServer((sock: Socket) => {
-      ssh.forwardOut('127.0.0.1', sock.remotePort ?? 0, dstHost, dstPort, (err, stream) => {
-        if (err) {
-          sock.destroy(err);
-          return;
-        }
-        sock.on('error', () => stream.destroy());
-        stream.on('error', () => sock.destroy());
-        sock.pipe(stream).pipe(sock);
-      });
-    });
-    const localPort = await new Promise<number>((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(0, '127.0.0.1', () => {
-        const addr = server.address();
-        resolve(typeof addr === 'object' && addr ? addr.port : 0);
-      });
-    });
-
-    const tunnel = new SshTunnel(ssh, server, localPort, fingerprint);
+    const tunnel = new SshTunnel(ssh, dstHost, dstPort, fingerprint);
     ssh.on('close', () => tunnel.shutdown());
     ssh.on('error', () => tunnel.shutdown());
     return tunnel;
+  }
+
+  private forward(): Promise<ClientChannel> {
+    return new Promise((resolve, reject) => {
+      if (this.closed) return reject(new Error('SSH tunnel closed'));
+      this.ssh.forwardOut('127.0.0.1', 0, this.dstHost, this.dstPort, (err, channel) => (err ? reject(err) : resolve(channel)));
+    });
+  }
+
+  /** A new forwarded channel, shaped like a connected net.Socket for the drivers. */
+  async connect(): Promise<Duplex> {
+    return asSocket(await this.forward());
+  }
+
+  /**
+   * Local listener for drivers that only dial an address. On Linux and macOS it is a
+   * Unix socket in a directory only this user can open; on Windows, 127.0.0.1 TCP,
+   * which any local process can reach while the connection is open.
+   */
+  async listen(): Promise<LocalEndpoint> {
+    if (this.server) return this.address();
+    const server = createServer((sock: Socket) => {
+      this.forward().then(
+        (channel) => {
+          sock.on('error', () => channel.destroy());
+          channel.on('error', () => sock.destroy());
+          sock.pipe(channel).pipe(sock);
+        },
+        (err: Error) => sock.destroy(err),
+      );
+    });
+    this.server = server;
+    const path = process.platform === 'win32' ? undefined : join((this.socketDir = mkdtempSync(join(tmpdir(), 'datalodestar-'))), 'mongo.sock');
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      if (path) server.listen(path, resolve);
+      else server.listen(0, '127.0.0.1', resolve);
+    });
+    return this.address();
+  }
+
+  private address(): LocalEndpoint {
+    const addr = this.server!.address();
+    return typeof addr === 'string' ? { host: addr, port: 0 } : { host: '127.0.0.1', port: addr?.port ?? 0 };
   }
 
   close(): void {
@@ -96,10 +131,28 @@ export class SshTunnel {
   private shutdown(): void {
     if (this.closed) return;
     this.closed = true;
-    this.server.close();
+    this.server?.close();
+    if (this.socketDir) rmSync(this.socketDir, { recursive: true, force: true });
     this.ssh.end();
     this.onClose?.();
   }
+}
+
+/**
+ * pg calls connect() / setNoDelay(), ioredis setNoDelay() / setKeepAlive(), which an
+ * SSH channel lacks: they become no-ops, connect() only reports the channel as open.
+ */
+function asSocket(channel: ClientChannel): Duplex {
+  const s = channel as unknown as Duplex & Record<string, unknown>;
+  s.connecting = false;
+  s.setNoDelay = () => s;
+  s.setKeepAlive = () => s;
+  s.setTimeout = () => s;
+  s.connect = () => {
+    process.nextTick(() => s.emit('connect'));
+    return s;
+  };
+  return s;
 }
 
 function readPrivateKey(path: string | undefined): Buffer {

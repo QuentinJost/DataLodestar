@@ -1,4 +1,7 @@
 import Redis, { RedisOptions } from 'ioredis';
+import AbstractConnector from 'ioredis/built/connectors/AbstractConnector';
+import { Duplex } from 'stream';
+import { connect as tlsConnect, ConnectionOptions } from 'tls';
 import { CellValue, QueryResult, RedisKeyInfo, RedisValue, TxMode } from '../types';
 import { BaseDriver, BINARY_LIMIT, Endpoint, Mutex } from './driver';
 import { tlsOptions } from './tls';
@@ -66,6 +69,7 @@ export class RedisDriver implements BaseDriver {
       enableOfflineQueue: false,
       retryStrategy: () => null, // a lost session is reported, not silently re-opened (MULTI/SELECT state)
       connectionName: 'datalodestar', // Redis refuses spaces in client names
+      Connector: e.stream ? streamConnector(e.stream, tlsOptions(e)) : undefined,
     };
     this.session = new Redis(options);
     this.meta = new Redis(options);
@@ -255,6 +259,21 @@ export class RedisDriver implements BaseDriver {
       }
     });
   }
+}
+
+/** ioredis connector over a stream the caller opens (an SSH channel), with TLS on top when asked. */
+function streamConnector(open: () => Promise<Duplex>, tls: ConnectionOptions | undefined) {
+  return class StreamConnector extends AbstractConnector {
+    constructor(options: unknown) {
+      super((options as { disconnectTimeout?: number }).disconnectTimeout ?? 2000);
+    }
+    async connect() {
+      this.connecting = true;
+      const raw = await open();
+      this.stream = (tls ? tlsConnect({ ...tls, socket: raw }) : raw) as never;
+      return this.stream;
+    }
+  };
 }
 
 /** HSCAN / SSCAN until `wanted` items; items are pushed one by one (a spread of a huge batch overflows the stack). */

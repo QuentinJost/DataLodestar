@@ -1,3 +1,4 @@
+import { Duplex } from 'stream';
 import { BinaryCell, CellValue, DbKind, Family, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
 
 export interface Endpoint {
@@ -15,6 +16,11 @@ export interface Endpoint {
   sslServerName?: string;
   uri?: string;
   authSource?: string;
+  /**
+   * Opens a stream to the server (an SSH channel) instead of dialling host:port; host
+   * stays the server's name for TLS. Set for MySQL, PostgreSQL and Redis through SSH.
+   */
+  stream?: () => Promise<Duplex>;
 }
 
 /**

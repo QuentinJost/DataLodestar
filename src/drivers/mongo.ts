@@ -57,7 +57,8 @@ export class MongoDriver implements BaseDriver {
         options.auth = { username: parsed.user, password: e.password };
       }
     } else {
-      url = `mongodb://${e.host.includes(':') ? `[${e.host}]` : e.host}:${e.port}`;
+      // A path is the Unix socket of an SSH tunnel (see SshTunnel.listen).
+      url = e.host.startsWith('/') ? `mongodb://${encodeURIComponent(e.host)}` : `mongodb://${e.host.includes(':') ? `[${e.host}]` : e.host}:${e.port}`;
       // A single explicit host, possibly an SSH tunnel: never follow replica-set member names.
       options.directConnection = true;
       if (e.user) {

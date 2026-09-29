@@ -119,7 +119,9 @@ export class PostgresDriver implements SqlDriver {
     const existing = pool.get(database);
     if (existing) return existing;
     const e = this.endpoint;
+    const stream = e.stream ? await e.stream() : undefined;
     const client = new Client({
+      stream: stream && (() => stream),
       host: e.host,
       port: e.port,
       user: e.user,

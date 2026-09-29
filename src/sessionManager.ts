@@ -210,7 +210,7 @@ export async function connectWith(
     ssl: config.ssl,
     sslVerify: config.sslVerify ?? false,
     sslCaPath: config.sslCaPath || undefined,
-    // Kept when a tunnel replaces the host: the certificate names the real server.
+    // Kept when a tunnel replaces the host (MongoDB): the certificate names the real server.
     sslServerName: config.sslServerName || config.host,
     uri: config.uri || undefined,
     authSource: config.authSource || undefined,
@@ -220,9 +220,13 @@ export async function connectWith(
       throw new Error('A connection string cannot go through the SSH tunnel: clear it and use host / port.');
     }
     if (config.ssh?.enabled) {
-      tunnel = await SshTunnel.open(config.ssh, secrets, config.host, config.port, checkHostKey);
-      endpoint.host = '127.0.0.1';
-      endpoint.port = tunnel.localPort;
+      const t = (tunnel = await SshTunnel.open(config.ssh, secrets, config.host, config.port, checkHostKey));
+      if (config.kind === 'mongodb') {
+        // The MongoDB driver only dials an address: a private local socket.
+        Object.assign(endpoint, await t.listen());
+      } else {
+        endpoint.stream = () => t.connect();
+      }
     }
     driver = createDriver(config.kind, endpoint);
     await driver.connect();

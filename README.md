@@ -178,11 +178,17 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   it at startup: install a keyring or leave **Save passwords** unchecked.
 - **Use SSL/TLS** verifies the server certificate by default: its chain (against the system CAs, or
   the **CA certificate** file for a private or self-signed CA) and its name (**Certificate name**,
-  default the host; set it through an SSH tunnel, which dials `127.0.0.1`). Unchecking **Verify the
+  default the host; set it when the host is an IP or an alias, as is common through an SSH tunnel
+  where the host is often `127.0.0.1` as seen from the SSH server). Unchecking **Verify the
   server certificate** encrypts without checking, so an attacker on the path can read the password.
   Connections saved before 0.5.0 keep working unchecked and are listed in a warning at startup. A
-  MongoDB connection string sets its own TLS options (`tls=true`, `tlsCAFile=…`). Through an SSH
-  tunnel, MySQL checks the name right after the handshake rather than during it.
+  MongoDB connection string sets its own TLS options (`tls=true`, `tlsCAFile=…`). When the
+  certificate name is not the host (or the host is an IP), MySQL checks it right after the
+  handshake rather than during it.
+- Through an SSH tunnel, MySQL, PostgreSQL and Redis talk to the server over SSH channels: no port
+  is opened on this machine. MongoDB's driver can only dial an address, so it gets a Unix socket in
+  a directory only you can open (removed on disconnect); on Windows it is a `127.0.0.1` port, which
+  any local process can reach while the connection is open.
 
 ## Settings
 

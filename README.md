@@ -160,8 +160,10 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   Connections saved by an earlier version are cleaned the same way at startup.
 - MongoDB scripts and the viewer's FILTER / SORT are evaluated in-process with Node's `vm`, like
   mongosh runs your code: it is not a sandbox. Run only scripts you trust.
-- **Copy as CSV** copies values as they are: a cell starting with `=` can act as a formula once
-  pasted into a spreadsheet.
+- **Copy as CSV** quotes a cell starting with `=`, `+`, `-`, `@`, tab or CR and prefixes it with
+  `'`, so a spreadsheet does not run it as a formula (plain numbers such as `-1` are kept as they
+  are). Set `dataLodestar.csvEscapeFormulas` to `false` for raw output. Double-clicking a cell
+  copies it raw.
 - A workspace's `.vscode/settings.json` cannot turn off `dataLodestar.confirmDestructive`, and the
   table viewer accepts a single condition in WHERE / ORDER BY (no `;` followed by another statement).
 - On Linux without a running keyring, VS Code falls back to a weak "basic" encryption and warns about
@@ -179,6 +181,7 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
 | Setting | Default | |
 |---|---|---|
 | `dataLodestar.maxRows` | 1000 | Rows displayed per query result |
+| `dataLodestar.csvEscapeFormulas` | true | Copy as CSV neutralises cells a spreadsheet would run as formulas |
 | `dataLodestar.pageSize` | 100 | Default page size of the data viewer |
 | `dataLodestar.binaryDisplay` | auto | Default format of binary columns |
 | `dataLodestar.stopOnError` | true | Stop a script at the first failing statement |

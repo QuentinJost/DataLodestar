@@ -1,5 +1,6 @@
 // Shared result grid for the results and table webviews.
 (function () {
+  const SqlBinary = typeof window !== 'undefined' ? window.SqlBinary : require('./binaryFormat.js');
   const MAX_CELL = 500;
 
   /** Text of a cell as shown, copied and exported; `mode` applies to binary cells. */
@@ -103,15 +104,26 @@
     return select;
   }
 
-  function toCsv(columns, rows, opts) {
-    const modes = columnModes(columns, rows, opts || {});
-    const esc = (v, c) => {
-      if (v === null) return '';
-      const s = display(v, modes[c]);
-      return /[",\n\r;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-    };
-    return [columns.map((name) => esc(name)).join(','), ...rows.map((r) => r.map(esc).join(','))].join('\n');
+  /** Starts a spreadsheet formula (CSV injection) unless the text is just a number such as -1. */
+  const FORMULA_START = /^[=+\-@\t\r]/;
+  const PLAIN_NUMBER = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
+
+  /** One CSV field; with `escapeFormulas`, a formula-like text is quoted and prefixed with '. */
+  function csvField(s, escapeFormulas) {
+    if (escapeFormulas && FORMULA_START.test(s) && !PLAIN_NUMBER.test(s)) return '"\'' + s.replace(/"/g, '""') + '"';
+    return /[",\n\r;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
 
-  window.SqlGrid = { render, toCsv };
+  /** opts.escapeFormulas (default true) neutralises cells a spreadsheet would run. */
+  function toCsv(columns, rows, opts) {
+    opts = opts || {};
+    const escapeFormulas = opts.escapeFormulas !== false;
+    const modes = columnModes(columns, rows, opts);
+    const esc = (v, c) => (v === null ? '' : csvField(display(v, modes[c]), escapeFormulas));
+    return [columns.map((name) => csvField(name, escapeFormulas)).join(','), ...rows.map((r) => r.map(esc).join(','))].join('\n');
+  }
+
+  const api = { render, toCsv, csvField };
+  if (typeof window !== 'undefined') window.SqlGrid = api;
+  if (typeof module !== 'undefined') module.exports = api;
 })();

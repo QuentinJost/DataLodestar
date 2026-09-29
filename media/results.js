@@ -7,6 +7,7 @@
   let items = [];
   let active = 0;
   let binaryDefault = 'auto';
+  let escapeFormulas = true;
   let jsonView = !!saved.jsonView;
   /** Per column name, kept across runs so a re-run keeps the chosen format. */
   const binaryModes = saved.binaryModes || {};
@@ -80,7 +81,7 @@
       const copy = document.createElement('button');
       copy.className = 'secondary';
       copy.textContent = 'Copy as CSV';
-      copy.addEventListener('click', () => vscode.postMessage({ type: 'copy', text: SqlGrid.toCsv(item.columns, item.rows, gridOpts()) }));
+      copy.addEventListener('click', () => vscode.postMessage({ type: 'copy', text: SqlGrid.toCsv(item.columns, item.rows, { ...gridOpts(), escapeFormulas }) }));
       status.append(copy);
     }
     status.append(sql);
@@ -109,6 +110,7 @@
     if (e.data.type === 'results') {
       items = e.data.items;
       binaryDefault = e.data.binaryDisplay || 'auto';
+      escapeFormulas = e.data.csvEscapeFormulas !== false;
       const firstError = items.findIndex((x) => x.error);
       const lastGrid = items.map((x) => x.columns.length > 0).lastIndexOf(true);
       const restoredTab = e.data.restored && saved.active < items.length ? saved.active : undefined;

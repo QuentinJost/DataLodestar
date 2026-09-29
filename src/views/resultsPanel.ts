@@ -65,7 +65,9 @@ export class ResultsPanel {
   private post(items: ResultItem[], restored = false): void {
     this.pending = undefined;
     this.last = items;
-    const binaryDisplay = vscode.workspace.getConfiguration('dataLodestar').get<string>('binaryDisplay', 'auto');
-    void this.panel?.webview.postMessage({ type: 'results', items, binaryDisplay, restored });
+    const settings = vscode.workspace.getConfiguration('dataLodestar');
+    const binaryDisplay = settings.get<string>('binaryDisplay', 'auto');
+    const csvEscapeFormulas = settings.get<boolean>('csvEscapeFormulas', true);
+    void this.panel?.webview.postMessage({ type: 'results', items, binaryDisplay, csvEscapeFormulas, restored });
   }
 }

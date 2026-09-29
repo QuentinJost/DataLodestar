@@ -80,6 +80,11 @@
         "icon": "$(trash)"
       },
       {
+        "command": "dataLodestar.resetHostKey",
+        "title": "Reset Pinned SSH Host Key",
+        "category": "DataLodestar"
+      },
+      {
         "command": "dataLodestar.connect",
         "title": "Connect",
         "category": "DataLodestar",
@@ -235,6 +240,11 @@
           "command": "dataLodestar.deleteConnection",
           "when": "view == dataLodestar.connections && viewItem =~ /^connection/",
           "group": "4_edit@2"
+        },
+        {
+          "command": "dataLodestar.resetHostKey",
+          "when": "view == dataLodestar.connections && viewItem =~ /^connection/",
+          "group": "4_edit@3"
         },
         {
           "command": "dataLodestar.refresh",

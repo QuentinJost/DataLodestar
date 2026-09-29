@@ -310,6 +310,18 @@ test('postgres: idle sessions close unless they hold a transaction or state, and
   }
 });
 
+test('ssh: a changed host key refused by the prompt stops the tunnel', { skip }, async () => {
+  const cfg = { enabled: true, host: env.SSH_HOST!, port: 22, username: 'tunnel', auth: 'password' as const, hostFingerprint: 'SHA256:not-the-real-key' };
+  const asked: (string | undefined)[] = [];
+  await assert.rejects(
+    SshTunnel.open(cfg, { sshPassword: env.SSH_PASSWORD }, env.MYSQL_HOST!, 3306, async (_fp, expected) => {
+      asked.push(expected);
+      return false;
+    }),
+  );
+  assert.deepEqual(asked, ['SHA256:not-the-real-key'], 'asked with the pinned key');
+});
+
 test('ssh: tunnel with host key pinning to MySQL', { skip }, async () => {
   const cfg = { enabled: true, host: env.SSH_HOST!, port: 22, username: 'tunnel', auth: 'password' as const };
   const secrets = { sshPassword: env.SSH_PASSWORD };

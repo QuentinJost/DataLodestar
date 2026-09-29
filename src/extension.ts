@@ -22,7 +22,8 @@ export function activate(ctx: vscode.ExtensionContext): void {
   const openSql = (connId: string, database: string | undefined, text: string, language?: string) => runner.openSql(connId, database, text, language);
 
   /** Connection targeted by a command: tree node, else active editor binding, else a quick pick. */
-  async function targetConnection(node?: NavNode, onlyConnected = false): Promise<string | undefined> {
+  async function targetConnection(node?: NavNode | string, onlyConnected = false): Promise<string | undefined> {
+    if (typeof node === 'string') return store.get(node) ? node : undefined;
     if (node instanceof ConnectionNode) return node.config.id;
     if (node && 'connId' in node) return node.connId;
     const editor = vscode.window.activeTextEditor;
@@ -55,6 +56,28 @@ export function activate(ctx: vscode.ExtensionContext): void {
     const id = await targetConnection(node);
     const config = id && store.get(id);
     if (config) ConnectionForm.show(ctx.extensionUri, store, sessions, config);
+  });
+
+  register('dataLodestar.resetHostKey', async (node?: NavNode) => {
+    const id = await targetConnection(node);
+    const config = id && store.get(id);
+    if (!config) return;
+    const ssh = config.ssh;
+    if (!ssh?.hostFingerprint) {
+      void vscode.window.showInformationMessage(`DataLodestar: "${config.name}" has no pinned SSH host key.`);
+      return;
+    }
+    const host = `${ssh.host}:${ssh.port}`;
+    const forget = `Forget the key of ${host}`;
+    const ok = await vscode.window.showWarningMessage(
+      `Forget the pinned SSH host key of ${host} (${ssh.hostFingerprint})?\n` +
+        'Only do this if the server key really changed. The next connection shows the new fingerprint and asks you to trust it: compare it with the one given by the server administrator.',
+      { modal: true },
+      forget,
+    );
+    if (ok !== forget) return;
+    await store.save({ ...config, ssh: { ...ssh, hostFingerprint: undefined } });
+    void vscode.window.showInformationMessage(`DataLodestar: pinned host key of ${host} forgotten.`);
   });
 
   register('dataLodestar.deleteConnection', async (node?: NavNode) => {

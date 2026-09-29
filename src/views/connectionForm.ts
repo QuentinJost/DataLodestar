@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import * as vscode from 'vscode';
 import { ConnectionStore } from '../connectionStore';
-import { connectWith, SessionManager } from '../sessionManager';
+import { connectWith, SessionManager, showChangedHostKey } from '../sessionManager';
 import { ConnectionConfig, ConnectionSecrets } from '../types';
 import { splitUriPassword } from '../uriCredentials';
 import { renderPage } from './webview';
@@ -133,7 +133,8 @@ export class ConnectionForm {
       return config;
     }
     const sshHost = `${config.ssh.host}:${config.ssh.port}`;
-    const previous = this.existing?.ssh;
+    // Read again: the pinned key may have been reset while the form was open.
+    const previous = this.existing && this.store.get(this.existing.id)?.ssh;
     if (this.trustedFingerprint?.host === sshHost) config.ssh.hostFingerprint = this.trustedFingerprint.value;
     else if (previous && `${previous.host}:${previous.port}` === sshHost) config.ssh.hostFingerprint = previous.hostFingerprint;
     return config;
@@ -164,11 +165,12 @@ export class ConnectionForm {
     try {
       const started = Date.now();
       const { driver, tunnel } = await connectWith(config, secrets, async (fp, expected) => {
+        if (expected) {
+          void showChangedHostKey(config, `${config.ssh!.host}:${config.ssh!.port}`, expected, fp);
+          return false;
+        }
         const trust = 'Trust this key';
-        const text = expected
-          ? `SSH HOST KEY CHANGED.\nExpected ${expected}\nReceived ${fp}`
-          : `Unknown SSH host key:\n${fp}\nTrust it?`;
-        return (await vscode.window.showWarningMessage(text, { modal: true }, trust)) === trust;
+        return (await vscode.window.showWarningMessage(`Unknown SSH host key:\n${fp}\nTrust it?`, { modal: true }, trust)) === trust;
       });
       try {
         const dbs = await driver.listDatabases(config.showSystemDatabases);

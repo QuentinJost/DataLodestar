@@ -109,20 +109,18 @@ export class SessionManager implements vscode.Disposable {
     return secrets;
   }
 
+  /**
+   * First connection: trust on first use. A changed key is never accepted from this
+   * prompt: the pinned key has to be reset on purpose (dataLodestar.resetHostKey).
+   */
   private async confirmHostKey(config: ConnectionConfig, fingerprint: string, expected: string | undefined): Promise<boolean> {
     const host = `${config.ssh!.host}:${config.ssh!.port}`;
+    if (expected) {
+      void showChangedHostKey(config, host, expected, fingerprint);
+      return false;
+    }
     const trust = 'Trust this key';
-    const choice = expected
-      ? await vscode.window.showErrorMessage(
-          `SSH HOST KEY CHANGED for ${host}.\nExpected ${expected}\nReceived ${fingerprint}\nSomeone may be intercepting the connection.`,
-          { modal: true },
-          trust,
-        )
-      : await vscode.window.showWarningMessage(
-          `First connection to ${host}. Host key fingerprint:\n${fingerprint}\nTrust it?`,
-          { modal: true },
-          trust,
-        );
+    const choice = await vscode.window.showWarningMessage(`First connection to ${host}. Host key fingerprint:\n${fingerprint}\nTrust it?`, { modal: true }, trust);
     return choice === trust;
   }
 
@@ -235,4 +233,17 @@ export async function connectWith(
     tunnel?.close();
     throw err;
   }
+}
+
+/** Refuses a changed SSH host key; the way forward is the connection settings, not a click. */
+export async function showChangedHostKey(config: ConnectionConfig, host: string, expected: string, received: string): Promise<void> {
+  const open = 'Open connection settings';
+  const choice = await vscode.window.showErrorMessage(
+    `SSH HOST KEY CHANGED for ${host}: the connection was refused.\nExpected ${expected}\nReceived ${received}\n` +
+      'Someone may be intercepting the connection. If the server key really changed (reinstall, new host), ' +
+      'check the new fingerprint with its administrator, then run "DataLodestar: Reset Pinned SSH Host Key".',
+    { modal: true },
+    open,
+  );
+  if (choice === open) await vscode.commands.executeCommand('dataLodestar.editConnection', config.id);
 }

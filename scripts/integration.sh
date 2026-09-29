@@ -37,8 +37,11 @@ for _ in $(seq 1 90); do
 done
 [ "${ready:-}" = 1 ] || { echo "servers not ready"; exit 1; }
 
+# MySQL generates a self-signed CA at first start: the TLS tests trust it through this copy.
+mkdir -p out/it && docker exec sqlnav-mysql cat /var/lib/mysql/ca.pem > out/it/mysql-ca.pem
+
 docker run --rm --init --network "$NET" -v "$HOST_DIR":/ext -w /ext \
   -e SQLNAV_IT=1 -e MYSQL_HOST=sqlnav-mysql -e PG_HOST=sqlnav-pg -e SSH_HOST=sqlnav-ssh \
   -e MONGO_HOST=sqlnav-mongo -e REDIS_HOST=sqlnav-redis \
-  -e DB_PASSWORD=$PW -e SSH_PASSWORD=$PW \
+  -e DB_PASSWORD=$PW -e SSH_PASSWORD=$PW -e MYSQL_CA=out/it/mysql-ca.pem \
   node:22-alpine sh -c 'ls out/test/*.test.js >/dev/null && node --test "out/test/*.test.js"'

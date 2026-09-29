@@ -1,5 +1,7 @@
 import * as mysql from 'mysql2/promise';
+import { checkServerIdentity, TLSSocket } from 'tls';
 import { CellValue, ColumnInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
+import { mysqlTlsOptions } from './tls';
 import { Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, leadingKeyword, Mutex, normalizeValue } from './driver';
 
 const SYSTEM_DATABASES = new Set(['information_schema', 'performance_schema', 'mysql', 'sys']);
@@ -36,20 +38,30 @@ export class MysqlDriver implements SqlDriver {
     this.session.on('error', (err) => this.onLost?.(err));
   }
 
-  private open(): Promise<mysql.Connection> {
+  private async open(): Promise<mysql.Connection> {
     const e = this.endpoint;
-    return mysql.createConnection({
+    const { ssl, nameAfterConnect } = mysqlTlsOptions(e);
+    const conn = await mysql.createConnection({
       host: e.host,
       port: e.port,
       user: e.user,
       password: e.password,
       database: e.database || undefined,
-      ssl: e.ssl ? { rejectUnauthorized: false } : undefined,
+      ssl: ssl as mysql.SslOptions | undefined,
       dateStrings: true,
       supportBigNumbers: true,
       bigNumberStrings: false,
       connectTimeout: 15000,
     });
+    if (nameAfterConnect) {
+      const socket = (conn as unknown as { connection: { stream: TLSSocket } }).connection.stream;
+      const mismatch = checkServerIdentity(nameAfterConnect, socket.getPeerCertificate());
+      if (mismatch) {
+        conn.destroy();
+        throw mismatch;
+      }
+    }
+    return conn;
   }
 
   async close(): Promise<void> {

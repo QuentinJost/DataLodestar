@@ -1,6 +1,7 @@
 import Redis, { RedisOptions } from 'ioredis';
 import { CellValue, QueryResult, RedisKeyInfo, RedisValue, TxMode } from '../types';
 import { BaseDriver, BINARY_LIMIT, Endpoint, Mutex } from './driver';
+import { tlsOptions } from './tls';
 
 /** Commands that would turn the session into a push-only connection. */
 const REFUSED = new Set(['SUBSCRIBE', 'PSUBSCRIBE', 'SSUBSCRIBE', 'MONITOR', 'SYNC', 'PSYNC']);
@@ -58,7 +59,7 @@ export class RedisDriver implements BaseDriver {
       username: e.user || undefined,
       password: e.password || undefined,
       db,
-      tls: e.ssl ? { rejectUnauthorized: false } : undefined,
+      tls: tlsOptions(e),
       lazyConnect: true,
       connectTimeout: 15000,
       maxRetriesPerRequest: 0,

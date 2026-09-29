@@ -202,6 +202,10 @@ export async function connectWith(
     password: secrets.password,
     database: config.database,
     ssl: config.ssl,
+    sslVerify: config.sslVerify ?? false,
+    sslCaPath: config.sslCaPath || undefined,
+    // Kept when a tunnel replaces the host: the certificate names the real server.
+    sslServerName: config.sslServerName || config.host,
     uri: config.uri || undefined,
     authSource: config.authSource || undefined,
   };

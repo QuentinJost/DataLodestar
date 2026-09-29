@@ -3,6 +3,7 @@ import { DDL_METHODS, evaluateObject, MongoOp, WRITE_METHODS } from '../mongoShe
 import { splitUriPassword } from '../uriCredentials';
 import { CellValue, CollectionInfo, CollectionStructure, FieldInfo, QueryResult, TxMode } from '../types';
 import { BaseDriver, BINARY_LIMIT, Endpoint, Mutex } from './driver';
+import { mongoTlsOptions } from './tls';
 
 const { EJSON } = BSON;
 
@@ -62,10 +63,7 @@ export class MongoDriver implements BaseDriver {
         options.auth = { username: e.user, password: e.password };
         options.authSource = e.authSource || 'admin';
       }
-      if (e.ssl) {
-        options.tls = true;
-        options.tlsAllowInvalidCertificates = true;
-      }
+      Object.assign(options, mongoTlsOptions(e));
     }
     this.client = new MongoClient(url, options);
     await this.client.connect();

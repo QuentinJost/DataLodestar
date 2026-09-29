@@ -1,6 +1,7 @@
 import { Client } from 'pg';
 import Cursor from 'pg-cursor';
 import { CellValue, ColumnInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
+import { tlsOptions } from './tls';
 import { Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, leadingKeyword, Mutex, normalizeValue } from './driver';
 
 const FK_ACTIONS: Record<string, string> = { a: 'NO ACTION', r: 'RESTRICT', c: 'CASCADE', n: 'SET NULL', d: 'SET DEFAULT' };
@@ -93,7 +94,7 @@ export class PostgresDriver implements SqlDriver {
       user: e.user,
       password: e.password,
       database,
-      ssl: e.ssl ? { rejectUnauthorized: false } : undefined,
+      ssl: tlsOptions(e),
       connectionTimeoutMillis: 15000,
       application_name: 'DataLodestar',
     });

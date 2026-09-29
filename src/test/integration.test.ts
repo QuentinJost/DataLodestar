@@ -183,6 +183,26 @@ test('postgres: a 2M-row SELECT keeps maxRows rows without buffering the rest', 
   });
 });
 
+test('mysql: TLS verification rejects an unknown CA and a wrong name, accepts the right CA and name', { skip }, async () => {
+  const { X509Certificate } = await import('crypto');
+  const { readFileSync } = await import('fs');
+  const ca = env.MYSQL_CA!;
+  // The auto-generated server certificate is named after the server version, not the host.
+  const caCn = /CN=([^\n,]+)/.exec(new X509Certificate(readFileSync(ca, 'utf8')).subject)![1];
+  const serverCn = caCn.replace('_CA_', '_Server_');
+  const tryConnect = async (extra: object) => {
+    const d = createDriver('mysql', { ...endpoint('mysql'), ssl: true, ...extra }) as SqlDriver;
+    await d.connect();
+    const r = await d.execute('SELECT 1', undefined);
+    await d.close();
+    return r.rows;
+  };
+  await assert.rejects(tryConnect({ sslVerify: true }), /self[- ]signed|unable to verify|certificate/i, 'unknown CA');
+  await assert.rejects(tryConnect({ sslVerify: true, sslCaPath: ca }), /altnames|does not match|Hostname/i, 'host name not in the certificate');
+  assert.deepEqual(await tryConnect({ sslVerify: true, sslCaPath: ca, sslServerName: serverCn }), [[1]]);
+  assert.deepEqual(await tryConnect({ sslVerify: false }), [[1]], 'opt-out still connects');
+});
+
 test('postgres: databases, schemas, structure, per-database manual transactions', { skip }, async () => {
   await withDriver('postgres', undefined, async (d) => {
     const existing = await d.execute("SELECT 1 FROM pg_database WHERE datname = 'analytics'", undefined);

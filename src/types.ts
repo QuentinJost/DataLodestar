@@ -30,6 +30,11 @@ export interface ConnectionConfig {
   /** MongoDB authentication database (default "admin"). */
   authSource?: string;
   ssl: boolean;
+  /** Check the server certificate; saved before 0.5.0 without it = not checked. */
+  sslVerify?: boolean;
+  sslCaPath?: string;
+  /** Name expected in the certificate when it differs from `host` (SSH tunnel, IP, alias). */
+  sslServerName?: string;
   txMode: TxMode;
   savePassword: boolean;
   showSystemDatabases: boolean;

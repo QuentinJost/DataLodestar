@@ -27,7 +27,12 @@ const BODY = `
       <select id="txMode"><option value="auto">Auto-commit</option><option value="manual">Manual (commit / rollback)</option></select>
     </div>
     <div class="row inline"><input id="savePassword" type="checkbox"><label for="savePassword">Save passwords in the OS keychain</label></div>
-    <div class="row inline"><input id="ssl" type="checkbox"><label for="ssl">Use SSL/TLS (certificate not verified)</label></div>
+    <div class="row inline" id="sslRow"><input id="ssl" type="checkbox"><label for="ssl">Use SSL/TLS</label></div>
+    <div class="row inline" id="sslVerifyRow"><input id="sslVerify" type="checkbox"><label for="sslVerify">Verify the server certificate</label></div>
+    <div class="row" id="sslCaRow"><label for="sslCa">CA certificate</label>
+      <div class="pair pair-button"><input id="sslCa" type="text" spellcheck="false" placeholder="optional PEM file, for a private or self-signed CA"><button type="button" id="browseCa" class="secondary">Browse…</button></div>
+    </div>
+    <div class="row" id="sslNameRow"><label for="sslServerName">Certificate name</label><input id="sslServerName" type="text" spellcheck="false" placeholder="optional; default: the host above"></div>
     <div class="row inline" id="showSystemRow"><input id="showSystem" type="checkbox"><label for="showSystem">Show system databases</label></div>
     <div class="row"><span></span><span class="hint" id="kindHint"></span></div>
   </fieldset>
@@ -105,6 +110,11 @@ export class ConnectionForm {
           openLabel: 'Use this key',
         });
         if (picked?.[0]) this.post({ type: 'keyPath', path: picked[0].fsPath });
+        break;
+      }
+      case 'browseCa': {
+        const picked = await vscode.window.showOpenDialog({ canSelectMany: false, openLabel: 'Use this CA', filters: { 'PEM certificates': ['pem', 'crt', 'cer'], 'All files': ['*'] } });
+        if (picked?.[0]) this.post({ type: 'caPath', path: picked[0].fsPath });
         break;
       }
       case 'test':

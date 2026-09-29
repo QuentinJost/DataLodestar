@@ -64,6 +64,21 @@ export class ConnectionStore {
     return { moved, dropped };
   }
 
+  /**
+   * Connections saved before certificate checks existed have no `sslVerify`: they
+   * keep working unchecked (self-signed servers), made explicit once. Returns the
+   * names of those using SSL/TLS, which now connect without verification.
+   */
+  async migrateTlsVerify(): Promise<string[]> {
+    const unchecked: string[] = [];
+    for (const config of this.list()) {
+      if (config.sslVerify !== undefined) continue;
+      await this.save({ ...config, sslVerify: false });
+      if (config.ssl) unchecked.push(config.name);
+    }
+    return unchecked;
+  }
+
   async remove(id: string): Promise<void> {
     await this.ctx.globalState.update(CONFIGS_KEY, this.list().filter((c) => c.id !== id));
     await this.ctx.secrets.delete(secretKey(id));

@@ -12,16 +12,7 @@ import { mongoSource, sqlSource, TablePanel } from './views/tablePanel';
 
 export function activate(ctx: vscode.ExtensionContext): void {
   const store = new ConnectionStore(ctx);
-  void store.migrateUriPasswords().then(({ moved, dropped }) => {
-    if (moved.length) {
-      void vscode.window.showInformationMessage(`DataLodestar: the password of ${moved.join(', ')} was moved from the connection string to the OS keychain.`);
-    }
-    if (dropped.length) {
-      void vscode.window.showWarningMessage(
-        `DataLodestar: the password was removed from the connection string of ${dropped.join(', ')} (passwords are not saved for it); it will be asked at the next connection.`,
-      );
-    }
-  });
+  void migrate(store);
   const sessions = new SessionManager(store);
   const results = new ResultsPanel(ctx.extensionUri);
   const runner = new QueryRunner(ctx, store, sessions, results);
@@ -196,4 +187,24 @@ export function activate(ctx: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   // Sessions are closed by SessionManager.dispose (registered in subscriptions).
+}
+
+/** One-time rewrites of saved connections, in sequence: each one reads and rewrites the whole list. */
+async function migrate(store: ConnectionStore): Promise<void> {
+  const { moved, dropped } = await store.migrateUriPasswords();
+  if (moved.length) {
+    void vscode.window.showInformationMessage(`DataLodestar: the password of ${moved.join(', ')} was moved from the connection string to the OS keychain.`);
+  }
+  if (dropped.length) {
+    void vscode.window.showWarningMessage(
+      `DataLodestar: the password was removed from the connection string of ${dropped.join(', ')} (passwords are not saved for it); it will be asked at the next connection.`,
+    );
+  }
+  const unchecked = await store.migrateTlsVerify();
+  if (unchecked.length) {
+    void vscode.window.showWarningMessage(
+      `DataLodestar: ${unchecked.join(', ')} use${unchecked.length === 1 ? 's' : ''} SSL/TLS without checking the server certificate. ` +
+        'Edit the connection and check "Verify the server certificate" (with a CA file for a self-signed server).',
+    );
+  }
 }

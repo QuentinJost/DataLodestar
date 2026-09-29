@@ -7,6 +7,12 @@ export interface Endpoint {
   password?: string;
   database?: string;
   ssl: boolean;
+  /** Check the server certificate (chain and name) when `ssl` is on. */
+  sslVerify?: boolean;
+  /** PEM file of the CA that signed the server certificate, when not a public one. */
+  sslCaPath?: string;
+  /** Name the certificate must carry; default `host`. */
+  sslServerName?: string;
   uri?: string;
   authSource?: string;
 }

@@ -166,7 +166,13 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   table viewer accepts a single condition in WHERE / ORDER BY (no `;` followed by another statement).
 - On Linux without a running keyring, VS Code falls back to a weak "basic" encryption and warns about
   it at startup: install a keyring or leave **Save passwords** unchecked.
-- **Use SSL/TLS** encrypts the connection but does not verify the server certificate.
+- **Use SSL/TLS** verifies the server certificate by default: its chain (against the system CAs, or
+  the **CA certificate** file for a private or self-signed CA) and its name (**Certificate name**,
+  default the host; set it through an SSH tunnel, which dials `127.0.0.1`). Unchecking **Verify the
+  server certificate** encrypts without checking, so an attacker on the path can read the password.
+  Connections saved before 0.5.0 keep working unchecked and are listed in a warning at startup. A
+  MongoDB connection string sets its own TLS options (`tls=true`, `tlsCAFile=…`). Through an SSH
+  tunnel, MySQL checks the name right after the handshake rather than during it.
 
 ## Settings
 

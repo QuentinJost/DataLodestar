@@ -64,6 +64,8 @@ export class ResultsPanel {
 
   private post(items: ResultItem[], restored = false): void {
     this.pending = undefined;
+    // MongoDB results travel as documents only; results.js rebuilds their grid cells.
+    items = items.map((i) => (i.documents ? { ...i, rows: [] } : i));
     this.last = items;
     const settings = vscode.workspace.getConfiguration('dataLodestar');
     const binaryDisplay = settings.get<string>('binaryDisplay', 'auto');

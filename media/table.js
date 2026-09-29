@@ -75,6 +75,7 @@
   }
 
   function renderData(msg) {
+    if (msg.documents && !msg.rows.length) msg.rows = SqlMongoRows.rowsFromDocuments(msg.columns, msg.documents);
     lastData = msg;
     $('apply').disabled = false;
     const from = msg.rows.length ? state.offset + 1 : 0;

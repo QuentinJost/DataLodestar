@@ -6,6 +6,9 @@ import { CellValue, CollectionInfo, CollectionStructure, FieldInfo, QueryResult,
 import { BaseDriver, BINARY_LIMIT, Endpoint, Mutex } from './driver';
 import { mongoTlsOptions } from './tls';
 
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { rowsFromDocuments } = require('../../media/mongoRows.js') as { rowsFromDocuments: (columns: string[], documents: unknown[]) => CellValue[][] };
+
 const { EJSON } = BSON;
 
 const SYSTEM_DATABASES = new Set(['admin', 'local', 'config']);
@@ -410,9 +413,22 @@ export function documentsToResult(docs: Document[], maxRows: number): Omit<Query
   }
   const id = columns.indexOf('_id');
   if (id > 0) columns.unshift(...columns.splice(id, 1));
-  const rows = shown.map((doc) => columns.map((c) => bsonToCell(doc[c])));
-  const documents = shown.map((d) => EJSON.serialize(d, { relaxed: true }));
-  return { columns, rows, documents, truncated };
+  const documents = shown.map(toExtendedJson);
+  return { columns, rows: rowsFromDocuments(columns, documents), documents, truncated };
+}
+
+/**
+ * Relaxed Extended JSON, except integers past 2^53 (a Long the driver did not turn into
+ * a number, or a bigint), kept exact as { $numberLong } instead of rounded.
+ */
+export function toExtendedJson(v: unknown): unknown {
+  if (typeof v === 'bigint') return { $numberLong: v.toString() };
+  if (v instanceof Long) return Number.isSafeInteger(v.toNumber()) ? v.toNumber() : { $numberLong: v.toString() };
+  if (Array.isArray(v)) return v.map(toExtendedJson);
+  if (v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype) {
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, toExtendedJson(x)]));
+  }
+  return EJSON.serialize(v, { relaxed: true });
 }
 
 function valuesToResult(values: unknown[]): Omit<QueryResult, 'durationMs'> {

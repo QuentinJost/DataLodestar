@@ -13,6 +13,7 @@ export type OpenSql = (connId: string, database: string, text: string, language?
 
 export interface DataPage {
   columns: string[];
+  /** Empty when `documents` is set: the webview derives the rows from them. */
   rows: CellValue[][];
   documents?: unknown[];
   hasMore: boolean;
@@ -232,9 +233,10 @@ export function mongoSource(sessions: SessionManager, connId: string, coll: Coll
       const r = await d.find(coll.database, coll.name, filter, sort, limit + 1, offset);
       sessions.emit(connId);
       const hasMore = r.rows.length > limit;
+      // Documents only: the webview builds the grid cells from them (media/mongoRows.js).
       return {
         columns: r.columns,
-        rows: r.rows.slice(0, limit),
+        rows: [],
         documents: r.documents?.slice(0, limit),
         hasMore,
         durationMs: r.durationMs,

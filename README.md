@@ -210,6 +210,9 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   `SHOW` and `EXPLAIN` through a cursor; other statements (such as `INSERT … RETURNING`) and a
   MySQL `CALL` are read whole. The data viewer always pages with `LIMIT`/`OFFSET`.
 - Cells are read-only; edit data with `UPDATE` statements.
+- A result of more than 50 rows draws only the rows in view, one line each (a line break shows as
+  `↵`); hover a cell for its full value, double-click to copy it. Column widths are set from the
+  first screen and a sample of the rest, so a longer value further down is cut with `…`.
 - The tree keeps what it listed (databases, tables, collections, columns) until **Refresh**, a
   disconnect, or a `CREATE` / `DROP` / `ALTER` / `RENAME` (or a MongoDB DDL method) run from the
   editor. Objects created another way, or Redis key counts, show after a **Refresh**.

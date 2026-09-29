@@ -115,7 +115,7 @@
 
   window.addEventListener('message', (e) => {
     if (e.data.type === 'results') {
-      items = e.data.items;
+      items = e.data.items.map((x) => (x.documents && !x.rows.length ? { ...x, rows: SqlMongoRows.rowsFromDocuments(x.columns, x.documents) } : x));
       binaryDefault = e.data.binaryDisplay || 'auto';
       escapeFormulas = e.data.csvEscapeFormulas !== false;
       maxCell = e.data.maxCellChars;

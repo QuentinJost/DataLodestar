@@ -56,8 +56,8 @@ export class RedisPanel {
   ) {
     const title = `db${database} — ${connName}`;
     this.panel = vscode.window.createWebviewPanel('dataLodestar.redis', title, vscode.ViewColumn.Active, {
+      // Not retained when hidden: the page rescans from its saved pattern and key.
       enableScripts: true,
-      retainContextWhenHidden: true,
       localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')],
     });
     this.panel.iconPath = new vscode.ThemeIcon('symbol-key');

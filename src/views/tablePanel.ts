@@ -78,6 +78,8 @@ export class TablePanel {
   static show(extensionUri: vscode.Uri, openSql: OpenSql, connId: string, source: DataSource, tab: Tab): void {
     const existing = TablePanel.open.get(source.key);
     if (existing) {
+      // A hidden panel reloads when revealed and may miss the message: 'ready' sends it again.
+      existing.requestedTab = tab;
       existing.panel.reveal();
       void existing.panel.webview.postMessage({ type: 'showTab', tab });
       return;
@@ -86,17 +88,20 @@ export class TablePanel {
   }
 
   private readonly panel: vscode.WebviewPanel;
+  /** Tab to open on the next 'ready': the initial one, then any asked while hidden. */
+  private requestedTab?: Tab;
 
   private constructor(
     extensionUri: vscode.Uri,
     private readonly openSql: OpenSql,
     private readonly connId: string,
     private readonly source: DataSource,
-    private readonly initialTab: Tab,
+    initialTab: Tab,
   ) {
+    this.requestedTab = initialTab;
+    // Not retained when hidden: the page reloads from its saved state (filters, sort, page).
     this.panel = vscode.window.createWebviewPanel('dataLodestar.table', source.title, vscode.ViewColumn.Active, {
       enableScripts: true,
-      retainContextWhenHidden: true,
       localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')],
     });
     this.panel.iconPath = new vscode.ThemeIcon(source.icon);
@@ -115,12 +120,13 @@ export class TablePanel {
       case 'ready':
         this.post({
           type: 'init',
-          tab: this.initialTab,
+          tab: this.requestedTab,
           pageSize: settings.get<number>('pageSize', 100),
           binaryDisplay: settings.get<string>('binaryDisplay', 'auto'),
           labels: this.source.labels,
           sortStyle: this.source.sortStyle,
         });
+        this.requestedTab = undefined;
         break;
       case 'load': {
         const limit = Math.max(1, Math.min(10000, Math.floor(Number(msg.limit)) || 100));

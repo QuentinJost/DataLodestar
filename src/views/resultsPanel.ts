@@ -19,6 +19,8 @@ export class ResultsPanel {
   private panel?: vscode.WebviewPanel;
   private ready = false;
   private pending?: ResultItem[];
+  /** Last results shown, posted again when the (not retained) page reloads. */
+  private last?: ResultItem[];
 
   constructor(private readonly extensionUri: vscode.Uri) {}
 
@@ -29,7 +31,7 @@ export class ResultsPanel {
         'dataLodestar.results',
         'SQL Results',
         { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
-        { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'media')] },
+        { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'media')] },
       );
       this.panel.iconPath = new vscode.ThemeIcon('table');
       this.panel.webview.html = renderPage(
@@ -43,12 +45,16 @@ export class ResultsPanel {
         if (msg.type === 'ready') {
           this.ready = true;
           if (this.pending) this.post(this.pending);
+          else if (this.last) this.post(this.last, true);
         } else if (msg.type === 'copy') {
           void vscode.env.clipboard.writeText(msg.text);
           vscode.window.setStatusBarMessage('Copied to clipboard', 2000);
         }
       });
-      this.panel.onDidDispose(() => (this.panel = undefined));
+      this.panel.onDidDispose(() => {
+        this.panel = undefined;
+        this.last = undefined;
+      });
     } else {
       this.panel.reveal(undefined, true);
     }
@@ -56,9 +62,10 @@ export class ResultsPanel {
     if (this.ready) this.post(items);
   }
 
-  private post(items: ResultItem[]): void {
+  private post(items: ResultItem[], restored = false): void {
     this.pending = undefined;
+    this.last = items;
     const binaryDisplay = vscode.workspace.getConfiguration('dataLodestar').get<string>('binaryDisplay', 'auto');
-    void this.panel?.webview.postMessage({ type: 'results', items, binaryDisplay });
+    void this.panel?.webview.postMessage({ type: 'results', items, binaryDisplay, restored });
   }
 }

@@ -3,17 +3,21 @@
   const tabs = document.getElementById('tabs');
   const status = document.getElementById('status');
   const content = document.getElementById('content');
+  const saved = vscode.getState() || {};
   let items = [];
   let active = 0;
   let binaryDefault = 'auto';
-  let jsonView = false;
+  let jsonView = !!saved.jsonView;
   /** Per column name, kept across runs so a re-run keeps the chosen format. */
-  const binaryModes = {};
+  const binaryModes = saved.binaryModes || {};
+  /** The page is not retained when hidden: what the user chose survives the reload. */
+  const persist = () => vscode.setState({ active, jsonView, binaryModes });
   const gridOpts = () => ({
     binaryModes,
     binaryDefault,
     onBinaryMode: (column, mode) => {
       binaryModes[column] = mode;
+      persist();
       draw();
     },
   });
@@ -35,6 +39,7 @@
       b.title = short(item.sql);
       b.addEventListener('click', () => {
         active = i;
+        persist();
         draw();
       });
       tabs.appendChild(b);
@@ -66,6 +71,7 @@
       toggle.textContent = jsonView ? 'Grid' : 'JSON';
       toggle.addEventListener('click', () => {
         jsonView = !jsonView;
+        persist();
         draw();
       });
       status.append(toggle);
@@ -105,7 +111,9 @@
       binaryDefault = e.data.binaryDisplay || 'auto';
       const firstError = items.findIndex((x) => x.error);
       const lastGrid = items.map((x) => x.columns.length > 0).lastIndexOf(true);
-      active = firstError >= 0 ? firstError : lastGrid >= 0 ? lastGrid : items.length - 1;
+      const restoredTab = e.data.restored && saved.active < items.length ? saved.active : undefined;
+      active = restoredTab ?? (firstError >= 0 ? firstError : lastGrid >= 0 ? lastGrid : items.length - 1);
+      persist();
       draw();
     }
   });

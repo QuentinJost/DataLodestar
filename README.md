@@ -118,7 +118,8 @@ display and show their full size.
 In the table viewer of a MySQL or PostgreSQL table, double-click a cell (or select it and press
 `Enter` / `F2`) to edit it: `Enter` keeps the text, `Shift+Enter` adds a line, `Escape` cancels.
 **Set NULL** and **Revert cell** act on the selected cell. Edited cells stay highlighted, across
-pages and reloads, until **Save** writes them or **Discard** drops them.
+pages and reloads, until **Save** writes them or **Discard** drops them. Closing the viewer keeps
+them too: the next viewer opened on that table starts from them (until VS Code quits).
 
 - **Save** sends one `UPDATE … WHERE <key>` per row, all or nothing: if a row fails (constraint,
   type, or a key that matches no row any more because it changed since it was read), nothing is

@@ -227,3 +227,25 @@ test('table: a save that ends while the panel is hidden is told to the reloaded 
   panel.fromPage({ type: 'ready' });
   assert.equal(sent(panel, 'saved').length, 1, 'once');
 });
+
+test('table: unsaved edits outlive a closed viewer and come back in the next one on that table', () => {
+  const sessions = fakeSessions();
+  const source = (key: string) => ({ key, title: key, icon: 'table', database: 'shop', queryLanguage: 'sql', labels: {}, sortStyle: 'sql' });
+  const open = (key: string) => {
+    TablePanel.show(extensionUri, sessions, async () => undefined, 'c1', source(key) as never, 'data');
+    const panel = panels.at(-1)!;
+    panel.fromPage({ type: 'ready' });
+    return panel;
+  };
+  const edits = { '[1]': { key: [1], changes: { name: 'x' } } };
+  const first = open('t7');
+  assert.equal(sent(first, 'init').at(-1)!.edits, undefined);
+  first.fromPage({ type: 'draft', edits });
+  first.dispose();
+  assert.deepEqual(sent(open('t7'), 'init').at(-1)!.edits, edits, 'given back on the same table');
+  assert.equal(sent(open('t8'), 'init').at(-1)!.edits, undefined, 'not on another table');
+  const again = panels.at(-2)!; // the reopened t7
+  again.fromPage({ type: 'draft', edits: {} }); // saved or discarded
+  again.dispose();
+  assert.equal(sent(open('t7'), 'init').at(-1)!.edits, undefined);
+});

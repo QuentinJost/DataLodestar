@@ -203,3 +203,25 @@ test('editing: a page reloaded while a save runs shows Saving… until the outco
   await page.waitForFunction(() => document.getElementById('saveEdits').textContent === 'Save');
   await page.close();
 });
+
+test('editing: each change is handed to the extension, and a new viewer starts from the edits it gives back', async () => {
+  const page = await editableViewer();
+  await page.dblclick(cell(0, 1));
+  await page.fill('textarea.cell-editor', 'kept');
+  await page.keyboard.press('Enter');
+  assert.deepEqual((await posted(page, 'draft')).at(-1).edits, { '[1]': { key: [1], changes: { name: 'kept' } } });
+  await page.click('#discardEdits');
+  assert.deepEqual((await posted(page, 'draft')).at(-1).edits, {});
+  await page.close();
+
+  const reopened = await browser.newPage();
+  await reopened.setContent(html(BODY, SCRIPTS));
+  const edits = { '[1]': { key: [1], changes: { name: 'from the closed viewer' } } };
+  await send(reopened, { type: 'init', pageSize: 100, edits, labels: { where: 'WHERE', orderBy: 'ORDER BY', wherePlaceholder: '', orderPlaceholder: '' }, sortStyle: 'sql' });
+  await send(reopened, EDITING);
+  await send(reopened, { type: 'data', columns: ['id', 'name', 'photo'], rows: [[1, 'a', null]], hasMore: false, durationMs: 1, text: 'SELECT', quoted: {} });
+  await reopened.waitForSelector(cell(0, 1));
+  assert.equal(await reopened.textContent(cell(0, 1)), 'from the closed viewer');
+  assert.equal(await reopened.textContent('#editCount'), '1 unsaved change in 1 row');
+  await reopened.close();
+});

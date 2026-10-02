@@ -34,6 +34,12 @@
     vscode.setState(state);
   }
 
+  /** After a change of `state.edits`: the extension keeps them too, for a viewer reopened on this table. */
+  function persistEdits() {
+    persist();
+    vscode.postMessage({ type: 'draft', edits: state.edits });
+  }
+
   function showTab(tab) {
     state.tab = tab;
     persist();
@@ -128,7 +134,7 @@
     else entry.changes[column] = text;
     if (Object.keys(entry.changes).length) state.edits[id] = entry;
     else delete state.edits[id];
-    persist();
+    persistEdits();
     updateEditBar();
   }
 
@@ -316,7 +322,7 @@
   });
   $('discardEdits').addEventListener('click', () => {
     state.edits = {};
-    persist();
+    persistEdits();
     updateEditBar();
     if (grid) grid.refresh();
   });
@@ -332,6 +338,8 @@
         if (!saved.limit) state.limit = msg.pageSize;
         // Reloaded while a save runs: its outcome comes once it ends.
         saving = !!msg.saving;
+        // A new viewer on a table whose last viewer closed with unsaved edits.
+        if (!saved.edits && msg.edits) state.edits = msg.edits;
         binaryDefault = msg.binaryDisplay || 'auto';
         maxCell = msg.maxCellChars;
         sortStyle = msg.sortStyle || 'sql';
@@ -365,15 +373,17 @@
       case 'editing':
         editInfo = msg;
         // Edits kept from an earlier page load, for a table that turned read-only, cannot be saved.
-        if (!msg.editable) state.edits = {};
-        persist();
+        if (!msg.editable && Object.keys(state.edits).length) {
+          state.edits = {};
+          persistEdits();
+        }
         if (lastData) renderData(lastData);
         else updateEditBar();
         break;
       case 'saved':
         saving = false;
         state.edits = {};
-        persist();
+        persistEdits();
         updateEditBar();
         request();
         break;

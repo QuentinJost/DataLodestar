@@ -90,6 +90,8 @@ type SaveOutcome = { type: 'saved' } | { type: 'saveError'; message: string; ind
 /** Data browser (filter / sort / paging) and structure view for a table or a collection. */
 export class TablePanel {
   private static readonly open = new Map<string, TablePanel>();
+  /** Unsaved edits per table, kept when its viewer closes and given back to the next one (until VS Code quits). */
+  private static readonly drafts = new Map<string, Record<string, unknown>>();
 
   static show(extensionUri: vscode.Uri, sessions: TxSessions, openSql: OpenSql, connId: string, source: DataSource, tab: Tab): void {
     const existing = TablePanel.open.get(source.key);
@@ -162,6 +164,7 @@ export class TablePanel {
           labels: this.source.labels,
           sortStyle: this.source.sortStyle,
           saving: this.saving,
+          edits: TablePanel.drafts.get(this.source.key),
         });
         this.ready = true;
         if (this.saveOutcome) {
@@ -177,6 +180,10 @@ export class TablePanel {
             (err) => this.post({ type: 'editing', editable: false, reason: (err as Error).message }),
           );
         }
+        break;
+      case 'draft':
+        if (msg.edits && typeof msg.edits === 'object' && Object.keys(msg.edits).length) TablePanel.drafts.set(this.source.key, msg.edits as Record<string, unknown>);
+        else TablePanel.drafts.delete(this.source.key);
         break;
       case 'save': {
         let outcome: SaveOutcome;

@@ -21,7 +21,7 @@ function fakeSessions() {
   const pending = new Map<string, boolean>();
   return {
     onDidChange: changed.event,
-    txState: (id: string) => ({ pending: !!pending.get(id), redis: false, connection: id }),
+    txState: (id: string) => ({ pending: !!pending.get(id), connected: true, redis: false, connection: id }),
     set(id: string, value: boolean) {
       pending.set(id, value);
       changed.fire(id);
@@ -62,7 +62,7 @@ test('results: the bar follows the pending changes of the connection that ran', 
   results.show(run('UPDATE t SET a = 1'), 'c1');
   const panel = panels.at(-1)!;
   panel.fromPage({ type: 'ready' });
-  assert.deepEqual(panel.posted.at(-1), { type: 'tx', pending: false, redis: false, connection: 'c1' }, 'with the results, and after each reload');
+  assert.deepEqual(panel.posted.at(-1), { type: 'tx', pending: false, connected: true, redis: false, connection: 'c1' }, 'with the results, and after each reload');
   sessions.set('c1', true);
   assert.equal(panel.posted.at(-1)!.pending, true);
   const before = panel.posted.length;
@@ -111,7 +111,7 @@ test('table: a tab asked while the panel is hidden opens once its page has reloa
 
 test('table: the bar follows the pending changes of its connection until the panel closes', async () => {
   const { panel, sessions } = openTable('t3', 'data');
-  assert.deepEqual(panel.posted.at(-1), { type: 'tx', pending: false, redis: false, connection: 'c1' }, 'right after init');
+  assert.deepEqual(panel.posted.at(-1), { type: 'tx', pending: false, connected: true, redis: false, connection: 'c1' }, 'right after init');
   sessions.set('c1', true);
   assert.equal(panel.posted.at(-1)!.pending, true);
   panel.fromPage({ type: 'rollback' });

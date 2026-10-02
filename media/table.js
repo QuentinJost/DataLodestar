@@ -251,7 +251,8 @@
         const ended = txPending && !msg.pending;
         txPending = msg.pending;
         SqlTxBar.update($('txbar'), msg, (type) => vscode.postMessage({ type }));
-        if (ended) request();
+        // Ended by a disconnect (or a lost connection): reading again would reconnect.
+        if (ended && msg.connected) request();
         break;
       }
       case 'structureError':

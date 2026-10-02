@@ -22,6 +22,8 @@ export class Session {
 /** What the Commit / Rollback bar of a panel shows for a connection. */
 export interface TxState {
   pending: boolean;
+  /** False once disconnected or lost: the viewer must not reconnect by reading again. */
+  connected: boolean;
   /** Commit sends EXEC, Rollback sends DISCARD. */
   redis: boolean;
   connection: string;
@@ -183,7 +185,8 @@ export class SessionManager implements vscode.Disposable {
   /** Pending changes of a connection, for the Commit / Rollback bars of the panels. */
   txState(id: string): TxState {
     const config = this.store.get(id);
-    return { pending: !!this.sessions.get(id)?.driver.pendingTransaction, redis: config?.kind === 'redis', connection: config?.name ?? '' };
+    const session = this.sessions.get(id);
+    return { pending: !!session?.driver.pendingTransaction, connected: !!session, redis: config?.kind === 'redis', connection: config?.name ?? '' };
   }
 
   notifySchemaChange(id: string): void {

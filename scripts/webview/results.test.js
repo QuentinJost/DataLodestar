@@ -44,13 +44,13 @@ test('pending changes show a Commit / Rollback bar; a click sends it once', asyn
   const page = await browser.newPage();
   await page.setContent(html(BODY, SCRIPTS));
   assert.equal((await bar(page)).shown, false, 'hidden until the extension says so');
-  await tx(page, { pending: true, redis: false, connection: 'local' });
+  await tx(page, { pending: true, connected: true, redis: false, connection: 'local' });
   await page.waitForSelector('#txbar:not(.hidden)');
   assert.deepEqual(await bar(page), { shown: true, text: 'Uncommitted changes on local', buttons: [['Commit', false], ['Rollback', false]] });
   await page.click('#txbar button:first-of-type');
   assert.deepEqual(await page.evaluate(() => window.posted.filter((m) => m.type !== 'ready')), [{ type: 'commit' }]);
   assert.deepEqual((await bar(page)).buttons, [['Commit', true], ['Rollback', true]], 'disabled until the new state arrives');
-  await tx(page, { pending: false, redis: false, connection: 'local' });
+  await tx(page, { pending: false, connected: true, redis: false, connection: 'local' });
   await page.waitForSelector('#txbar.hidden', { state: 'attached' });
   await page.close();
 });

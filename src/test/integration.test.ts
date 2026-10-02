@@ -564,6 +564,25 @@ async function withMysqlEditTable(fn: (d: SqlDriver, other: SqlDriver, save: (ch
   });
 }
 
+test('mysql: a BIGINT key past 2^53 finds its own row, not a neighbour equal as a double', { skip }, async () => {
+  const ref: TableRef = { database: 'shop', name: 'edit_bigint', type: 'table' };
+  await withDriver('mysql', 'shop', async (d) => {
+    const q = d.qualifiedName(ref);
+    await d.execute(`DROP TABLE IF EXISTS ${q}`, 'shop');
+    try {
+      await d.execute(`CREATE TABLE ${q} (id BIGINT PRIMARY KEY, name VARCHAR(20))`, 'shop');
+      await d.execute(`INSERT INTO ${q} VALUES (9007199254740992, 'low'), (9007199254740993, 'high')`, 'shop');
+      const e = editability(ref, await d.describeTable(ref)) as EditInfo;
+      const key = (await d.execute(`SELECT id FROM ${q} WHERE name = 'high'`, 'shop')).rows[0][0];
+      assert.equal(key, '9007199254740993', 'read as text');
+      await d.updateRows(ref, toUpdates(e, [{ key: [key], changes: { name: 'edited' } }]));
+      assert.deepEqual((await d.execute(`SELECT name FROM ${q} ORDER BY id`, 'shop')).rows, [['low'], ['edited']]);
+    } finally {
+      await d.execute(`DROP TABLE IF EXISTS ${q}`, 'shop');
+    }
+  });
+});
+
 test('mysql: without a strict sql_mode, a value MySQL would truncate fails the save instead', { skip }, async () => {
   await withMysqlEditTable(async (d, _other, save, names) => {
     await d.execute("SET SESSION sql_mode = ''", 'shop');

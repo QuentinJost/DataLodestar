@@ -3,7 +3,8 @@ import { CellValue, TableRef, TableStructure } from './types';
 /** How the table viewer may edit a table: the columns naming a row and what each column accepts. */
 export interface EditInfo {
   key: string[];
-  columns: Record<string, { editable: boolean; nullable: boolean }>;
+  /** `integer`: key values read as text (past 2^53) are bound as integers, not compared as doubles. */
+  columns: Record<string, { editable: boolean; nullable: boolean; integer?: boolean }>;
 }
 
 export type Editability = ({ editable: true } & EditInfo) | { editable: false; reason: string };
@@ -24,6 +25,7 @@ export interface RowUpdate {
 const BINARY_TYPE = /^((tiny|medium|long)?blob|(var)?binary|bit|bytea)\b/i;
 /** Shown as JSON (arrays, intervals, geometry), which the server does not take back as input. */
 const NO_TEXT_ROUND_TRIP = /\[\]$|^(interval|point|line|lseg|box|path|polygon|circle|geometry|linestring|geometrycollection|multi(point|linestring|polygon))\b/i;
+const INTEGER_TYPE = /^(tiny|small|medium|big)?int(eger)?\b|^int[248]\b/i;
 /** Computed by the server: MySQL "VIRTUAL GENERATED" / "STORED GENERATED", PostgreSQL ones (see describeTable). */
 const COMPUTED = /\b(virtual|stored) generated\b|^generated stored$|^identity always$/i;
 
@@ -37,7 +39,11 @@ export function editability(ref: TableRef, st: TableStructure): Editability {
     st.indexes.filter((i) => i.unique && usable(i.columns)).sort((a, b) => a.columns.length - b.columns.length)[0];
   if (!key) return { editable: false, reason: 'no primary key or unique NOT NULL index to find the rows by' };
   const columns: EditInfo['columns'] = {};
-  for (const c of st.columns) columns[c.name] = { editable: !BINARY_TYPE.test(c.type) && !NO_TEXT_ROUND_TRIP.test(c.type) && !COMPUTED.test(c.extra), nullable: c.nullable };
+  for (const c of st.columns) columns[c.name] = {
+      editable: !BINARY_TYPE.test(c.type) && !NO_TEXT_ROUND_TRIP.test(c.type) && !COMPUTED.test(c.extra),
+      nullable: c.nullable,
+      integer: INTEGER_TYPE.test(c.type),
+    };
   return { editable: true, key: key.columns, columns };
 }
 
@@ -52,7 +58,10 @@ export class RowEditError extends Error {
 }
 
 /** A key value as read back into what the driver binds: binary cells become bytes again. */
-function keyValue(v: unknown, column: string, index: number): unknown {
+function keyValue(v: unknown, column: string, index: number, integer: boolean): unknown {
+  // mysql2 reads a BIGINT past 2^53 as text; bound as text, MySQL compares it in double precision,
+  // where neighbouring ids are equal.
+  if (integer && typeof v === 'string' && /^-?\d+$/.test(v)) return BigInt(v);
   if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return v;
   if (v && typeof v === 'object' && typeof (v as { b?: unknown }).b === 'string' && typeof (v as { n?: unknown }).n === 'number') {
     const { b, n } = v as { b: string; n: number };
@@ -75,7 +84,7 @@ export function toUpdates(info: EditInfo, edits: unknown): RowUpdate[] {
       if (!info.columns[column]?.editable) throw new RowEditError(i, `The column ${column} cannot be edited.`);
       if (value !== null && typeof value !== 'string') throw new RowEditError(i, `The new value of ${column} is not text.`);
     }
-    return { set, where: info.key.map((column, k) => [column, keyValue(key[k], column, i)] as [string, unknown]) };
+    return { set, where: info.key.map((column, k) => [column, keyValue(key[k], column, i, !!info.columns[column]?.integer)] as [string, unknown]) };
   });
 }
 

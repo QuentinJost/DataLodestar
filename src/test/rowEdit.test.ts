@@ -76,6 +76,17 @@ test('toUpdates: the key comes back as read, binary cells as bytes', () => {
   assert.deepEqual(u.where[1][1], Buffer.from([0x0a, 0xff]));
 });
 
+test('toUpdates: an integer key read as text is bound as an integer, a text key stays text', () => {
+  const columns = { id: { editable: true, nullable: false, integer: true }, code: { editable: true, nullable: false }, name: { editable: true, nullable: true } };
+  const [byId] = toUpdates({ key: ['id'], columns }, [{ key: ['9007199254740993'], changes: { name: 'x' } }]);
+  assert.equal(byId.where[0][1], 9007199254740993n);
+  const [byCode] = toUpdates({ key: ['code'], columns }, [{ key: ['0000000000000012'], changes: { name: 'x' } }]);
+  assert.equal(byCode.where[0][1], '0000000000000012');
+  const e = editability(table, structure([col('id', { type: 'bigint unsigned' }), col('n', { type: 'int(11)' }), col('s', { type: 'varchar(20)' })], [idx('PRIMARY', ['id'], { primary: true })]));
+  assert.ok(e.editable);
+  assert.deepEqual(Object.entries(e.columns).map(([n, c]) => `${n}:${!!c.integer}`), ['id:true', 'n:true', 's:false']);
+});
+
 test('toUpdates: refuses what could reach another row or column', () => {
   const fails = (edits: unknown, re: RegExp, index?: number) =>
     assert.throws(

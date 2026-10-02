@@ -1,12 +1,9 @@
 // media/connection.js: the TLS checkboxes of the connection form.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
-const path = require('path');
-const { chromium, html } = require('./page');
+const { chromium, html, panelBody } = require('./page');
 
-/** The form markup as src/views/connectionForm.ts serves it. */
-const BODY = /const BODY = `([\s\S]*?)`;/.exec(fs.readFileSync(path.join(__dirname, '../../src/views/connectionForm.ts'), 'utf8'))[1];
+const BODY = panelBody('connectionForm.ts');
 
 let browser;
 before(async () => (browser = await chromium.launch()));

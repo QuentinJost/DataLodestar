@@ -26,6 +26,9 @@ export class StatusBar implements vscode.Disposable {
     const binding = editor && this.runner.binding(editor.document);
     // Keybindings for JavaScript / plain-text editors only apply to bound documents.
     void vscode.commands.executeCommand('setContext', 'dataLodestar.editorBound', !!binding);
+    // Commit / Rollback buttons in the editor title while its connection has pending changes.
+    const pending = !!binding && !!this.sessions.current(binding.connId)?.driver.pendingTransaction;
+    void vscode.commands.executeCommand('setContext', 'dataLodestar.editorTxPending', pending);
     if (!editor || (editor.document.languageId !== 'sql' && !binding)) {
       this.bindingItem.hide();
       this.txItem.hide();
@@ -46,7 +49,6 @@ export class StatusBar implements vscode.Disposable {
     this.bindingItem.show();
 
     const mode = session?.txMode ?? config.txMode;
-    const pending = !!session?.driver.pendingTransaction;
     if (config.kind === 'redis') {
       // Redis has no mode: only surface an open MULTI.
       this.txItem.text = '$(lock) MULTI open';

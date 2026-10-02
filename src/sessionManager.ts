@@ -19,6 +19,14 @@ export class Session {
   }
 }
 
+/** What the Commit / Rollback bar of a panel shows for a connection. */
+export interface TxState {
+  pending: boolean;
+  /** Commit sends EXEC, Rollback sends DISCARD. */
+  redis: boolean;
+  connection: string;
+}
+
 /** Opens, tracks and closes live sessions; owns the transaction-mode switches. */
 export class SessionManager implements vscode.Disposable {
   private readonly sessions = new Map<string, Session>();
@@ -172,6 +180,12 @@ export class SessionManager implements vscode.Disposable {
     this.emit(id);
   }
 
+  /** Pending changes of a connection, for the Commit / Rollback bars of the panels. */
+  txState(id: string): TxState {
+    const config = this.store.get(id);
+    return { pending: !!this.sessions.get(id)?.driver.pendingTransaction, redis: config?.kind === 'redis', connection: config?.name ?? '' };
+  }
+
   notifySchemaChange(id: string): void {
     this.schemaChanged.fire(id);
   }
@@ -195,6 +209,9 @@ export class SessionManager implements vscode.Disposable {
     this.schemaChanged.dispose();
   }
 }
+
+/** What a panel needs from the sessions for its Commit / Rollback bar. */
+export type TxSessions = Pick<SessionManager, 'onDidChange' | 'txState'>;
 
 /** Opens tunnel + driver for a config; used by sessions and by the "Test" button. */
 export async function connectWith(

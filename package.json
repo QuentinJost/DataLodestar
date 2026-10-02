@@ -282,6 +282,16 @@
           "command": "dataLodestar.runScript",
           "when": "(editorLangId == sql || dataLodestar.editorBound)",
           "group": "navigation@2"
+        },
+        {
+          "command": "dataLodestar.commit",
+          "when": "dataLodestar.editorTxPending",
+          "group": "navigation@3"
+        },
+        {
+          "command": "dataLodestar.rollback",
+          "when": "dataLodestar.editorTxPending",
+          "group": "navigation@4"
         }
       ],
       "commandPalette": [

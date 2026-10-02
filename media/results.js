@@ -3,6 +3,7 @@
   const tabs = document.getElementById('tabs');
   const status = document.getElementById('status');
   const content = document.getElementById('content');
+  const txbar = document.getElementById('txbar');
   const saved = vscode.getState() || {};
   let items = [];
   let active = 0;
@@ -128,6 +129,8 @@
       persist();
       drawTabs();
       draw();
+    } else if (e.data.type === 'tx') {
+      SqlTxBar.update(txbar, e.data, (type) => vscode.postMessage({ type }));
     }
   });
   draw();

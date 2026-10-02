@@ -173,13 +173,20 @@ export class SessionManager implements vscode.Disposable {
   }
 
   async commit(id: string): Promise<void> {
-    await this.sessions.get(id)?.driver.commit();
-    this.emit(id);
+    try {
+      await this.sessions.get(id)?.driver.commit();
+    } finally {
+      // A failed COMMIT (PostgreSQL: rolled back) still ends the transaction: the tree and bars follow.
+      this.emit(id);
+    }
   }
 
   async rollback(id: string): Promise<void> {
-    await this.sessions.get(id)?.driver.rollback();
-    this.emit(id);
+    try {
+      await this.sessions.get(id)?.driver.rollback();
+    } finally {
+      this.emit(id);
+    }
   }
 
   /** Pending changes of a connection, for the Commit / Rollback bars of the panels. */

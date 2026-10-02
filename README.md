@@ -133,7 +133,8 @@ your own uncommitted rows), plus a separate auto-commit session for the tree and
   several databases of the host. A `USE x` typed in a script updates the editor's binding.
 - **PostgreSQL** has no cross-database statements: each database gets its own session and
   transaction; Commit / Rollback apply to all of them. After an error, PostgreSQL rejects further
-  statements until you roll back; the connection stays marked as pending for that reason.
+  statements until you roll back; the connection stays marked as pending for that reason. A Commit
+  then keeps nothing (PostgreSQL rolls the transaction back) and says so instead of "Committed".
 
 - **MongoDB**: manual mode uses a multi-document transaction and needs a replica set or a sharded
   cluster (a single-node replica set is enough); it is refused on a standalone server. MongoDB aborts

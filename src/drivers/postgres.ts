@@ -1,8 +1,9 @@
 import { Client, CustomTypesConfig, types as pgTypes } from 'pg';
 import Cursor from 'pg-cursor';
 import { CellValue, ColumnInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
+import { applyUpdates, RowUpdate, updateStatement } from '../rowEdit';
 import { tlsOptions } from './tls';
-import { Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, leadingKeyword, Mutex, normalizeValue } from './driver';
+import { EDIT_SAVEPOINT, Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, leadingKeyword, Mutex, normalizeValue } from './driver';
 
 const FK_ACTIONS: Record<string, string> = { a: 'NO ACTION', r: 'RESTRICT', c: 'CASCADE', n: 'SET NULL', d: 'SET DEFAULT' };
 
@@ -345,6 +346,34 @@ export class PostgresDriver implements SqlDriver {
     } else if (this.openTx.has(db) && !isReadOnly(sql)) {
       this.dirtyTx.add(db);
     }
+  }
+
+  updateRows(ref: TableRef, updates: RowUpdate[]): Promise<void> {
+    const db = ref.database;
+    return this.lock.run(async () => {
+      const client = await this.client(db, 'session');
+      this.lastUsed.set(db, Date.now());
+      if (this.mode === 'manual' && !this.openTx.has(db)) {
+        await client.query('BEGIN');
+        this.openTx.add(db);
+      }
+      // Open in manual mode, or after a BEGIN typed in auto mode.
+      const inTx = this.openTx.has(db);
+      await client.query(inTx ? `SAVEPOINT ${EDIT_SAVEPOINT}` : 'BEGIN');
+      try {
+        await applyUpdates(
+          updates,
+          (u) => updateStatement(this.qualifiedName(ref), u, (n) => this.quoteIdent(n), (n) => `$${n}`),
+          async (sql, params) => (await client.query(sql, params)).rowCount ?? 0,
+        );
+        await client.query(inTx ? `RELEASE SAVEPOINT ${EDIT_SAVEPOINT}` : 'COMMIT');
+      } catch (err) {
+        // Back to before the edits: the user's transaction, if any, is usable again.
+        await client.query(inTx ? `ROLLBACK TO SAVEPOINT ${EDIT_SAVEPOINT}` : 'ROLLBACK').catch(() => undefined);
+        throw err;
+      }
+      if (inTx) this.dirtyTx.add(db);
+    });
   }
 
   async cancel(): Promise<void> {

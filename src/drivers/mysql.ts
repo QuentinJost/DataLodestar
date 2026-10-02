@@ -1,8 +1,9 @@
 import * as mysql from 'mysql2/promise';
 import { checkServerIdentity, TLSSocket } from 'tls';
 import { CellValue, ColumnInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
+import { applyUpdates, RowUpdate, updateStatement } from '../rowEdit';
 import { mysqlTlsOptions } from './tls';
-import { Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, leadingKeyword, Mutex, normalizeValue } from './driver';
+import { EDIT_SAVEPOINT, Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, leadingKeyword, Mutex, normalizeValue } from './driver';
 
 const SYSTEM_DATABASES = new Set(['information_schema', 'performance_schema', 'mysql', 'sys']);
 
@@ -230,6 +231,29 @@ export class MysqlDriver implements SqlDriver {
   private trackTransaction(sql: string): void {
     if (isTxControl(sql)) this.pendingTransaction = false;
     else if (isTxBegin(sql) || (this.mode === 'manual' && !isReadOnly(sql))) this.pendingTransaction = true;
+  }
+
+  updateRows(ref: TableRef, updates: RowUpdate[]): Promise<void> {
+    return this.lock.run(async () => {
+      const conn = this.session!;
+      // A transaction is open in manual mode (autocommit off) or after a BEGIN typed in auto mode;
+      // START TRANSACTION there would commit it.
+      const inTx = this.mode === 'manual' || this.pendingTransaction;
+      await conn.query(inTx ? `SAVEPOINT ${EDIT_SAVEPOINT}` : 'START TRANSACTION');
+      try {
+        await applyUpdates(
+          updates,
+          (u) => updateStatement(this.qualifiedName(ref), u, (n) => this.quoteIdent(n), () => '?'),
+          // FOUND_ROWS (a mysql2 default): rows matched, even those already holding the value.
+          async (sql, params) => ((await conn.query(sql, params))[0] as mysql.ResultSetHeader).affectedRows,
+        );
+        await conn.query(inTx ? `RELEASE SAVEPOINT ${EDIT_SAVEPOINT}` : 'COMMIT');
+      } catch (err) {
+        await conn.query(inTx ? `ROLLBACK TO SAVEPOINT ${EDIT_SAVEPOINT}` : 'ROLLBACK').catch(() => undefined);
+        throw err;
+      }
+      if (inTx) this.pendingTransaction = true;
+    });
   }
 
   async cancel(): Promise<void> {

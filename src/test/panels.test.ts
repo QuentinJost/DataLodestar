@@ -146,3 +146,55 @@ test('results and table: a commit that fails still sends the bar again, so its b
     commands.executeCommand = real;
   }
 });
+
+test('table: the page learns whether it may edit, and a save answers saved or the failing row', async () => {
+  const { RowEditError } = require('../rowEdit') as typeof import('../rowEdit');
+  const sessions = fakeSessions();
+  const saves: unknown[] = [];
+  let fail: Error | undefined;
+  const source = {
+    key: 't5', title: 't5', icon: 'table', database: 'shop', queryLanguage: 'sql', labels: {}, sortStyle: 'sql',
+    editing: async () => ({ editable: true, key: ['id'], columns: { id: { editable: true, nullable: false } } }),
+    save: async (edits: unknown) => {
+      saves.push(edits);
+      if (fail) throw fail;
+    },
+  };
+  TablePanel.show(extensionUri, sessions, async () => undefined, 'c1', source as never, 'data');
+  const panel = panels.at(-1)!;
+  panel.fromPage({ type: 'ready' });
+  await settle();
+  assert.equal(sent(panel, 'editing').at(-1)!.editable, true);
+  const edits = [{ key: [1], changes: { id: '2' } }];
+  panel.fromPage({ type: 'save', edits });
+  await settle();
+  assert.deepEqual(saves, [edits]);
+  assert.equal(panel.posted.at(-2)!.type, 'saved');
+  assert.equal(panel.posted.at(-1)!.type, 'tx', 'a save in a manual transaction makes it pending');
+  fail = new RowEditError(0, 'Row id = 1: no row has this key any more');
+  panel.fromPage({ type: 'save', edits });
+  await settle();
+  assert.deepEqual(sent(panel, 'saveError').at(-1), { type: 'saveError', message: 'Row id = 1: no row has this key any more', index: 0 });
+});
+
+test('table: sqlSource edits a table by its key, never a view', async () => {
+  const { sqlSource } = require('../views/tablePanel') as typeof import('../views/tablePanel');
+  const updates: unknown[] = [];
+  const emitted: string[] = [];
+  const structure = {
+    columns: [{ name: 'id', type: 'binary(16)', nullable: false, defaultValue: null, key: 'PRI', extra: '', comment: '' }, { name: 'name', type: 'text', nullable: true, defaultValue: null, key: '', extra: '', comment: '' }],
+    indexes: [{ name: 'PRIMARY', columns: ['id'], unique: true, primary: true }],
+    foreignKeys: [],
+    ddl: '',
+  };
+  const driver = { family: 'sql', describeTable: async () => structure, updateRows: async (_ref: unknown, u: unknown) => void updates.push(u) };
+  const sessions = { get: async () => ({ driver }), emit: (id: string) => emitted.push(id) };
+  const table = sqlSource(sessions as never, 'c1', 'local', { database: 'shop', name: 'people', type: 'table' });
+  const e = await table.editing!();
+  assert.ok(e.editable && e.columns.name.editable && !e.columns.id.editable);
+  await table.save!([{ key: [{ b: '00ff', n: 2 }], changes: { name: 'Zoé' } }]);
+  assert.deepEqual(updates, [[{ set: [['name', 'Zoé']], where: [['id', Buffer.from([0, 255])]] }]]);
+  assert.deepEqual(emitted, ['c1'], 'the transaction bar is told');
+  const view = sqlSource(sessions as never, 'c1', 'local', { database: 'shop', name: 'v', type: 'view' });
+  await assert.rejects(view.save!([{ key: [1], changes: { name: 'x' } }]), /cannot be edited: views are read-only/);
+});

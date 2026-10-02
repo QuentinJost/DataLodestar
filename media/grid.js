@@ -38,6 +38,12 @@
    * opts.binaryDefault  mode for columns not in binaryModes ("auto" by default)
    * opts.onBinaryMode   (column, mode) => void; shows a format picker on binary columns
    * opts.maxCell        characters shown per cell (dataLodestar.maxCellChars)
+   * opts.onSelect       (r, c) => void; called when a data cell gets selected
+   * opts.edit           in-place editing (table viewer):
+   *   can(r, c)          true when the cell may be edited
+   *   value(r, c)        { value } when the cell has an unsaved change (text or null), else undefined
+   *   onChange(r, c, v)  the cell was edited to `v` (text); the grid then redraws its row
+   * Returns { refresh(r?) } to redraw one row, or every row drawn, after a change made outside.
    */
   function render(container, columns, rows, opts) {
     opts = opts || {};
@@ -47,6 +53,12 @@
     const virtual = rows.length > VIRTUAL_MIN_ROWS;
     const offset = opts.offset || 0;
     let selected = null;
+    const edit = opts.edit;
+    /** The value shown in a cell: its unsaved change, if any, else what was read. */
+    const shown = (r, c) => {
+      const changed = edit && edit.value(r, c);
+      return changed ? changed.value : rows[r][c];
+    };
 
     const table = document.createElement('table');
     table.className = 'grid';
@@ -76,7 +88,11 @@
       const num = tr.insertCell();
       num.className = 'rownum';
       num.textContent = String(offset + r + 1);
-      rows[r].forEach((value, c) => formatCell(tr.insertCell(), value, modes[c], maxCell, virtual));
+      rows[r].forEach((_, c) => {
+        const td = tr.insertCell();
+        formatCell(td, shown(r, c), modes[c], maxCell, virtual);
+        if (edit && edit.value(r, c)) td.classList.add('edited');
+      });
       if (selected && selected.r === r) tr.cells[selected.c + 1].classList.add('selected');
       return tr;
     };
@@ -88,34 +104,113 @@
       return { td, r: Number(tr.dataset.r), c: td.cellIndex - 1 };
     };
 
-    body.addEventListener('click', (e) => {
-      const at = cellAt(e.target);
-      if (!at) return;
+    const select = (at) => {
       table.querySelectorAll('td.selected').forEach((x) => x.classList.remove('selected'));
       at.td.classList.add('selected');
       selected = { r: at.r, c: at.c };
+      if (opts.onSelect) opts.onSelect(at.r, at.c);
+    };
+    /** The drawn cell of a row and column, if its row is in the DOM. */
+    const cellOf = (r, c) => {
+      const tr = body.querySelector(`tr[data-r="${r}"]`);
+      return tr ? tr.cells[c + 1] : null;
+    };
+    const refresh = (r) => {
+      const trs = r === undefined ? [...body.querySelectorAll('tr[data-r]')] : [body.querySelector(`tr[data-r="${r}"]`)];
+      trs.filter(Boolean).forEach((tr) => tr.replaceWith(drawRow(Number(tr.dataset.r))));
+    };
+
+    body.addEventListener('click', (e) => {
+      const at = cellAt(e.target);
+      if (at) select(at);
     });
     // One tooltip at a time, built on hover, instead of a long `title` on every cell.
     body.addEventListener('mouseover', (e) => {
       const at = cellAt(e.target);
       if (!at || at.td.title) return;
-      const v = rows[at.r][at.c];
+      const v = shown(at.r, at.c);
       if (v === null) return;
       const text = display(v, modes[at.c]);
       const maxTitle = maxCell * TITLE_FACTOR;
       if (text.length > 40 || text.includes('\n')) at.td.title = text.length > maxTitle ? text.slice(0, maxTitle) + '…' : text;
     });
-    if (opts.onCopy) {
-      body.addEventListener('dblclick', (e) => {
-        const at = cellAt(e.target);
-        if (at) opts.onCopy(display(rows[at.r][at.c], modes[at.c]));
+    const copy = (r, c) => opts.onCopy && opts.onCopy(display(shown(r, c), modes[c]));
+    // Double-click edits a cell that can be, and copies any other one.
+    body.addEventListener('dblclick', (e) => {
+      const at = cellAt(e.target);
+      if (!at) return;
+      if (edit && edit.can(at.r, at.c)) startEdit(at.r, at.c);
+      else copy(at.r, at.c);
+    });
+    // Focusable, so that the selected cell answers the keyboard.
+    table.tabIndex = 0;
+    table.addEventListener('keydown', (e) => {
+      if (!selected || e.target !== table) return;
+      const { r, c } = selected;
+      if ((e.key === 'Enter' || e.key === 'F2') && edit && edit.can(r, c)) {
+        e.preventDefault();
+        startEdit(r, c);
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !String(window.getSelection())) {
+        e.preventDefault();
+        copy(r, c);
+      }
+    });
+
+    /**
+     * A text box over the cell: Enter keeps the text, Shift+Enter starts a new line, Escape
+     * cancels; leaving it (click elsewhere, scroll) keeps the text too.
+     */
+    function startEdit(r, c) {
+      const td = cellOf(r, c);
+      if (!td) return;
+      select({ td, r, c });
+      const before = shown(r, c);
+      const box = document.createElement('textarea');
+      box.className = 'cell-editor';
+      box.spellcheck = false;
+      box.value = before === null ? '' : String(before);
+      if (before === null) box.placeholder = 'NULL';
+      const rect = td.getBoundingClientRect();
+      box.style.left = rect.left + 'px';
+      box.style.top = rect.top + 'px';
+      box.style.width = Math.max(rect.width, 200) + 'px';
+      box.rows = Math.min(8, Math.max(1, box.value.split('\n').length));
+      document.body.appendChild(box);
+      box.focus();
+      box.select();
+      let typed = false;
+      let closed = false;
+      const scroller = container.closest('.scroll') || container;
+      const close = (keep) => {
+        if (closed) return;
+        closed = true;
+        scroller.removeEventListener('scroll', onScroll);
+        box.remove();
+        // A NULL cell opened and left without typing stays NULL, not ''.
+        if (keep && (before === null ? typed : box.value !== String(before))) edit.onChange(r, c, box.value);
+        refresh(r);
+        if (table.isConnected) table.focus();
+      };
+      const onScroll = () => close(true);
+      box.addEventListener('input', () => (typed = true));
+      box.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          close(false);
+        } else if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          close(true);
+        }
       });
+      box.addEventListener('blur', () => close(true));
+      scroller.addEventListener('scroll', onScroll, { passive: true });
     }
 
+    const handle = { refresh };
     if (!virtual) {
       rows.forEach((_, r) => body.appendChild(drawRow(r)));
       container.replaceChildren(table);
-      return;
+      return handle;
     }
     container.replaceChildren(table);
     const scroller = container.closest('.scroll') || container;
@@ -126,16 +221,17 @@
         if (!table.isConnected) return observer.disconnect();
         if (!scroller.clientHeight) return;
         observer.disconnect();
-        render(container, columns, rows, opts);
+        Object.assign(handle, render(container, columns, rows, opts));
       });
       observer.observe(scroller);
       container.__gridCleanup = () => {
         observer.disconnect();
         container.__gridCleanup = undefined;
       };
-      return;
+      return handle;
     }
     virtualise(container, table, body, rows.length, columns.length + 1, drawRow);
+    return handle;
   }
 
   /**

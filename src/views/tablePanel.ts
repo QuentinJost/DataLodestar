@@ -4,6 +4,7 @@ import { MongoDriver } from '../drivers/mongo';
 import { SessionManager, TxSessions } from '../sessionManager';
 import { CellValue, CollectionInfo, CollectionStructure, StructureView, TableRef, TableStructure } from '../types';
 import { assertSingleStatement } from '../sqlSplitter';
+import { Editability, EditInfo, editability, RowEditError, toUpdates } from '../rowEdit';
 import { renderPage } from './webview';
 
 type Tab = 'data' | 'structure';
@@ -36,6 +37,10 @@ export interface DataSource {
   load(where: string, orderBy: string, limit: number, offset: number): Promise<DataPage>;
   count(where: string): Promise<number>;
   structure(): Promise<StructureView>;
+  /** Absent: the viewer is read-only (MongoDB). */
+  editing?(): Promise<Editability>;
+  /** Applies the webview's edits (see RowEdit), all or none. */
+  save?(edits: unknown): Promise<void>;
 }
 
 const BODY = `
@@ -62,8 +67,15 @@ const BODY = `
       <span id="countValue"></span>
       <button id="openQuery" class="secondary" title="Open the generated query in an editor">Open as query</button>
       <button id="viewMode" class="secondary hidden" title="Switch between grid and JSON">JSON</button>
+      <button id="setNull" class="secondary hidden" title="Set the selected cell to NULL" disabled>Set NULL</button>
+      <button id="revertCell" class="secondary hidden" title="Undo the change of the selected cell" disabled>Revert cell</button>
     </div>
-    <div class="status"><span id="info"></span><code id="sql"></code></div>
+    <div id="editbar" class="editbar hidden" role="status" aria-live="polite">
+      <span id="editCount"></span>
+      <button id="saveEdits">Save</button>
+      <button id="discardEdits" class="secondary">Discard</button>
+    </div>
+    <div class="status"><span id="info"></span><span id="editHint" class="hint"></span><code id="sql"></code></div>
     <div id="dataError" class="error-box hidden"></div>
     <div id="grid" class="scroll"></div>
   </div>
@@ -140,6 +152,23 @@ export class TablePanel {
         });
         this.requestedTab = undefined;
         this.postTx();
+        if (this.source.editing) {
+          // After 'init': the rows can show before the structure is read.
+          this.source.editing().then(
+            (e) => this.post({ type: 'editing', ...e }),
+            (err) => this.post({ type: 'editing', editable: false, reason: (err as Error).message }),
+          );
+        }
+        break;
+      case 'save':
+        try {
+          if (!this.source.save) throw new Error('This viewer is read-only.');
+          await this.source.save(msg.edits);
+          this.post({ type: 'saved' });
+        } catch (err) {
+          this.post({ type: 'saveError', message: (err as Error).message, index: err instanceof RowEditError ? err.index : undefined });
+        }
+        this.postTx();
         break;
       case 'load': {
         const limit = Math.max(1, Math.min(10000, Math.floor(Number(msg.limit)) || 100));
@@ -191,6 +220,15 @@ export function sqlSource(sessions: SessionManager, connId: string, connName: st
     if (d.family !== 'sql') throw new Error('Not a SQL connection.');
     return d;
   };
+  let editInfo: Promise<Editability> | undefined;
+  const editing = () => {
+    editInfo ??= driver()
+      .then((d) => d.describeTable(table))
+      .then((st) => editability(table, st));
+    // Read again next time if it failed (connection lost, privileges): not a lasting answer.
+    editInfo.catch(() => (editInfo = undefined));
+    return editInfo;
+  };
   return {
     key: `${connId}|${table.database}|${table.schema ?? ''}|${table.name}`,
     title: `${label} — ${table.database}`,
@@ -226,6 +264,17 @@ export function sqlSource(sessions: SessionManager, connId: string, connName: st
     },
     async structure() {
       return sqlStructureView(await (await driver()).describeTable(table));
+    },
+    editing,
+    async save(edits) {
+      const e = await editing();
+      if (!e.editable) throw new Error(`This table cannot be edited: ${e.reason}.`);
+      const updates = toUpdates(e as EditInfo, edits);
+      try {
+        await (await driver()).updateRows(table, updates);
+      } finally {
+        sessions.emit(connId);
+      }
     },
   };
 }

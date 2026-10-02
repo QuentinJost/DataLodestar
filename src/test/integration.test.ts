@@ -4,7 +4,8 @@ import * as assert from 'node:assert/strict';
 import { createDriver } from '../drivers';
 import { SqlDriver } from '../drivers/driver';
 import { SshTunnel } from '../sshTunnel';
-import { DbKind } from '../types';
+import { DbKind, TableRef } from '../types';
+import { editability, EditInfo, RowEditError, toUpdates } from '../rowEdit';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { format } = require('../../media/binaryFormat.js');
@@ -468,6 +469,78 @@ test('postgres: an idle session holding a lock or a temp table is kept', { skip 
     await d.close();
   }
 });
+
+/** The table viewer's save path on a table keyed by raw bytes, through every transaction state. */
+for (const kind of ['mysql', 'postgres'] as DbKind[]) {
+  test(`${kind}: table viewer edits are all or nothing, and wait for commit inside a transaction`, { skip }, async () => {
+    const my = kind === 'mysql';
+    const database = my ? 'shop' : 'postgres';
+    const ref: TableRef = { database, schema: my ? undefined : 'public', name: 'edit_rows', type: 'table' };
+    await withDriver(kind, database, async (d) => {
+      await withDriver(kind, database, async (other) => {
+        const q = d.qualifiedName(ref);
+        const names = async (conn: SqlDriver) => (await conn.execute(`SELECT name FROM ${q} ORDER BY n`, database)).rows.map((r) => r[0]);
+        await d.execute(`DROP TABLE IF EXISTS ${q}`, database);
+        try {
+          await d.execute(
+            `CREATE TABLE ${q} (id ${my ? 'BINARY(16)' : 'bytea'} PRIMARY KEY, n INT NOT NULL UNIQUE, name VARCHAR(20), price DECIMAL(10,2))`,
+            database,
+          );
+          await d.execute(`INSERT INTO ${q} (id, n, name, price) VALUES (${my ? "UNHEX('00ff')" : "'\\x00ff'"}, 1, 'a', 1.50), (${my ? "UNHEX('0a0b')" : "'\\x0a0b'"}, 2, 'b', NULL)`, database);
+          const e = editability(ref, await d.describeTable(ref));
+          assert.ok(e.editable);
+          assert.deepEqual(e.key, ['id']);
+          // Keys as the grid got them: binary cells.
+          const keys = (await d.execute(`SELECT id FROM ${q} ORDER BY n`, database)).rows.map((r) => r[0]);
+          const save = (changes: Record<string, string | null>[]) =>
+            d.updateRows(ref, toUpdates(e as EditInfo, changes.map((c, i) => ({ key: [keys[i]], changes: c }))));
+
+          // Auto-commit: applied at once, a value written the same as read still matches its row.
+          await save([{ name: 'A', price: '1.5' }, { name: null }]);
+          assert.equal(d.pendingTransaction, false);
+          assert.deepEqual(await names(other), ['A', null]);
+
+          // The second row fails (n must be unique): the first one is undone too.
+          await assert.rejects(save([{ name: 'kept?' }, { n: '1' }]), (err: RowEditError) => err.index === 1 && /Row id = 0x0a0b(00)*:/.test(err.message));
+          assert.deepEqual(await names(other), ['A', null]);
+          assert.equal(d.pendingTransaction, false);
+
+          // A key that matches nothing any more.
+          await assert.rejects(
+            d.updateRows(ref, toUpdates(e as EditInfo, [{ key: [{ b: '1234', n: 2 }], changes: { name: 'x' } }])),
+            /no row has this key any more/,
+          );
+
+          // Manual mode: the edits join the user's transaction; a failed save leaves the user's own write.
+          await d.setTxMode('manual');
+          await d.execute(`UPDATE ${q} SET name = 'typed' WHERE n = 2`, database);
+          await assert.rejects(save([{ name: 'lost' }, { n: '1' }]));
+          assert.equal(d.pendingTransaction, true);
+          assert.deepEqual(await names(d), ['A', 'typed'], 'rolled back to the savepoint, not further');
+          await save([{ name: 'B' }]);
+          assert.deepEqual(await names(other), ['A', null], 'not visible before commit');
+          await d.commit();
+          assert.deepEqual(await names(other), ['B', 'typed']);
+          await save([{ name: 'C' }]);
+          assert.equal(d.pendingTransaction, true, 'an edit alone makes the transaction pending');
+          await d.rollback();
+          assert.deepEqual(await names(other), ['B', 'typed']);
+
+          // A BEGIN typed in auto mode: the save must not commit it.
+          await d.setTxMode('auto');
+          await d.execute('BEGIN', database);
+          await save([{ name: 'D' }]);
+          assert.equal(d.pendingTransaction, true);
+          await d.rollback();
+          assert.deepEqual(await names(other), ['B', 'typed']);
+        } finally {
+          await d.setTxMode('auto');
+          await d.execute(`DROP TABLE IF EXISTS ${q}`, database);
+        }
+      });
+    });
+  });
+}
 
 test('postgres: dates and times read as the server writes them, so an edit writes them back unchanged', { skip }, async () => {
   await withDriver('postgres', undefined, async (d) => {

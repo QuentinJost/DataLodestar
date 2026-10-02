@@ -1,4 +1,5 @@
 import { Duplex } from 'stream';
+import { RowUpdate } from '../rowEdit';
 import { BinaryCell, CellValue, DbKind, Family, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
 
 export interface Endpoint {
@@ -57,9 +58,17 @@ export interface SqlDriver extends BaseDriver {
    * `maxRows` rows are kept (and read, where the engine allows); `truncated` says more existed.
    */
   execute(sql: string, database: string | undefined, maxRows?: number): Promise<QueryResult>;
+  /**
+   * Applies the table viewer's edits, all or none: inside the user's open transaction (under a
+   * savepoint, so they then wait for commit/rollback like any write), else in a transaction of their own.
+   */
+  updateRows(ref: TableRef, updates: RowUpdate[]): Promise<void>;
   quoteIdent(name: string): string;
   qualifiedName(ref: TableRef): string;
 }
+
+/** Savepoint the table viewer's edits run under inside the user's transaction. */
+export const EDIT_SAVEPOINT = 'datalodestar_edit';
 
 /** Serialises async work so session statements never interleave. */
 export class Mutex {

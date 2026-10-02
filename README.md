@@ -29,6 +29,7 @@ codium --install-extension datalodestar-0.4.0.vsix
    and/or **ORDER BY** (`created_at DESC`), then press Enter. Clicking a column header cycles
    ASC → DESC → unsorted. **Count rows** runs a `COUNT(*)` with the current WHERE.
    The **Structure** tab shows columns, indexes, foreign keys and the DDL.
+   On MySQL and PostgreSQL tables, cells can be edited in place (see [Editing rows](#editing-rows)).
 4. **New Query** (on a connection, database or table) opens a SQL editor bound to that
    connection and database. The status bar shows the binding; click it to change it.
 
@@ -111,6 +112,27 @@ remembered per table and applies to copied cells and CSV. Only display changes, 
 filter by a UUID, write it in WHERE, e.g. `id = UUID_TO_BIN('9c3b6d8e-…', 1)` (MySQL 8) or
 `id = decode(replace('9c3b6d8e-…', '-', ''), 'hex')` (PostgreSQL). Values over 4 KB are cut for
 display and show their full size.
+
+## Editing rows
+
+In the table viewer of a MySQL or PostgreSQL table, double-click a cell (or select it and press
+`Enter` / `F2`) to edit it: `Enter` keeps the text, `Shift+Enter` adds a line, `Escape` cancels.
+**Set NULL** and **Revert cell** act on the selected cell. Edited cells stay highlighted, across
+pages and reloads, until **Save** writes them or **Discard** drops them.
+
+- **Save** sends one `UPDATE … WHERE <key>` per row, all or nothing: if a row fails (constraint,
+  type, or a key that matches no row any more because it changed since it was read), nothing is
+  kept and the error names the row. In auto-commit mode the save commits on its own; in a manual
+  transaction (or after a typed `BEGIN`) it runs under a savepoint and then waits for **Commit** /
+  **Rollback** like any other write.
+- Rows are found by the primary key, else by the shortest unique index over `NOT NULL` columns.
+  Views, and tables with neither, are read-only (the status line says why).
+- Values are sent as text and converted by the server (`true`, `2026-10-02 10:00`, JSON…). Dates
+  and times show as the server writes them (PostgreSQL in the session's `TimeZone`, with its
+  offset), so an edited one is written back as shown.
+  Binary columns, generated columns and `GENERATED ALWAYS` identities are not editable; a binary
+  key works. Double-clicking a cell that cannot be edited copies it, and `Ctrl+C` / `Cmd+C` copies
+  the selected cell.
 
 ## Transactions
 
@@ -219,9 +241,11 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   writes, say) may then have run for only some of the rows on PostgreSQL, and is rolled back with
   the statement on MySQL (InnoDB). Raise `maxRows`, or aggregate (`SELECT count(f(id)) FROM t`), to
   run it whole. `EXPLAIN ANALYZE` always runs to the end.
-- Cells are read-only; edit data with `UPDATE` statements.
+- Cells are editable in the table viewer of MySQL and PostgreSQL tables only (see
+  [Editing rows](#editing-rows)); query results and MongoDB / Redis data are read-only. Rows cannot
+  be added or deleted from the grid.
 - A result of more than 50 rows draws only the rows in view, one line each (a line break shows as
-  `↵`); hover a cell for its full value, double-click to copy it. Column widths are set from the
+  `↵`); hover a cell for its full value, double-click to copy it (or edit it, see above). Column widths are set from the
   first screen and a sample of the rest, so a longer value further down is cut with `…`.
 - The tree keeps what it listed (databases, tables, collections, columns) until **Refresh**, a
   disconnect, a `CREATE` / `DROP` / `ALTER` / `RENAME` (or a MongoDB DDL method) run from the

@@ -214,8 +214,9 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   `↵`); hover a cell for its full value, double-click to copy it. Column widths are set from the
   first screen and a sample of the rest, so a longer value further down is cut with `…`.
 - The tree keeps what it listed (databases, tables, collections, columns) until **Refresh**, a
-  disconnect, or a `CREATE` / `DROP` / `ALTER` / `RENAME` (or a MongoDB DDL method) run from the
-  editor. Objects created another way, or Redis key counts, show after a **Refresh**.
+  disconnect, a `CREATE` / `DROP` / `ALTER` / `RENAME` (or a MongoDB DDL method) run from the
+  editor, or the commit or rollback of pending changes. Objects created another way, or Redis key
+  counts, show after a **Refresh**.
 - For a MySQL `CALL` returning several result sets, only the first is shown.
 - PostgreSQL opens one session per database; one left idle for 10 minutes, outside a transaction,
   is closed and reopened on the next statement. A session that ran `SET`, `PREPARE`, `LISTEN`,

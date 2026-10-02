@@ -30,7 +30,7 @@ export class SessionManager implements vscode.Disposable {
   /** Fires the connection id when connected / mode / pending-transaction state changes. */
   readonly onDidChange = this.changed.event;
   private readonly schemaChanged = new vscode.EventEmitter<string>();
-  /** Fires the connection id after a statement that may add, drop or rename objects. */
+  /** Fires the connection id after a statement that may add, drop or rename objects, and when pending changes end. */
   readonly onDidChangeSchema = this.schemaChanged.event;
 
   constructor(private readonly store: ConnectionStore) {}
@@ -180,9 +180,12 @@ export class SessionManager implements vscode.Disposable {
   emit(id: string): void {
     const s = this.sessions.get(id);
     const state = s ? `on|${s.txMode}|${s.driver.pendingTransaction}` : 'off';
-    if (this.lastState.get(id) === state) return;
+    const before = this.lastState.get(id);
+    if (before === state) return;
     this.lastState.set(id, state);
     this.changed.fire(id);
+    // The tree lists on its own connection, blind to uncommitted DDL (PostgreSQL): re-list once the transaction ends.
+    if (s && before?.endsWith('|true') && !s.driver.pendingTransaction) this.schemaChanged.fire(id);
   }
 
   dispose(): void {

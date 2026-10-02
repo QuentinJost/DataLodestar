@@ -74,3 +74,22 @@ test('a failed listing is not cached', async () => {
   assert.equal((await tree.getChildren(conn))[0].kind, 'database');
   await expandAll();
 });
+
+test('the end of a transaction with changes re-lists: the tree could not see its DDL', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { SessionManager } = require('../sessionManager') as typeof import('../sessionManager');
+  const sessions = new SessionManager({} as never);
+  const driver = { pendingTransaction: false };
+  (sessions as unknown as { sessions: Map<string, unknown> }).sessions.set('c1', { id: 'c1', driver, txMode: 'manual' });
+  const relisted: string[] = [];
+  sessions.onDidChangeSchema((id) => relisted.push(id));
+  sessions.emit('c1');
+  driver.pendingTransaction = true; // CREATE TABLE in the open transaction
+  sessions.emit('c1');
+  assert.deepEqual(relisted, [], 'writes alone do not re-list');
+  driver.pendingTransaction = false; // COMMIT or ROLLBACK
+  sessions.emit('c1');
+  assert.deepEqual(relisted, ['c1']);
+  sessions.emit('c1');
+  assert.deepEqual(relisted, ['c1'], 'once');
+});

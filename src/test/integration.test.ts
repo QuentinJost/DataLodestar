@@ -319,6 +319,23 @@ test('postgres: databases, schemas, structure, per-database manual transactions'
   });
 });
 
+test('postgres: DDL of a manual transaction is listed once committed', { skip }, async () => {
+  await withDriver('postgres', undefined, async (d) => {
+    await d.execute('DROP TABLE IF EXISTS tx_ddl', undefined);
+    const listed = async () => (await d.listTables('postgres')).some((t) => t.name === 'tx_ddl');
+    await d.setTxMode('manual');
+    await d.execute('CREATE TABLE tx_ddl (i int)', undefined);
+    assert.equal(await listed(), false, 'the metadata connection does not see uncommitted DDL');
+    await d.rollback();
+    assert.equal(await listed(), false, 'so a rollback leaves the listing right');
+    await d.execute('CREATE TABLE tx_ddl (i int)', undefined);
+    await d.commit();
+    assert.equal(await listed(), true, 'a commit changes it: the tree lists again');
+    await d.setTxMode('auto');
+    await d.execute('DROP TABLE tx_ddl', undefined);
+  });
+});
+
 test('postgres: idle sessions close unless they hold a transaction or state, and reopen on demand', { skip }, async () => {
   const { PostgresDriver, SESSION_IDLE_MS } = await import('../drivers/postgres');
   const d = new PostgresDriver(endpoint('postgres'));

@@ -18,26 +18,32 @@ export const holdsSessionState = (sql: string) =>
   /\binto\s+((global|local)\s+)?temp(orary)?\b|\bpg_temp\./i.test(sql) ||
   /\b(pg_(try_)?advisory_(xact_)?lock(_shared)?|set_config)\s*\(/i.test(sql);
 
-/** Statements read through a cursor, which stops after `maxRows` rows; the rest are buffered. */
+/** Statements read through a cursor (see readCursor); the rest are buffered. */
 const ROW_STATEMENTS = new Set(['select', 'with', 'values', 'table', 'show', 'explain']);
 
-/** A closed cursor stops a read; a data-modifying WITH and EXPLAIN (ANALYZE) run whole regardless. */
-const stopsWithCursor = (sql: string) => isReadOnly(sql) && leadingKeyword(sql) !== 'explain';
+/** Closing its cursor stops a read, except EXPLAIN (ANALYZE), which ran whole before its plan. */
+const stopsWithCursor = (sql: string) => leadingKeyword(sql) !== 'explain';
 
 interface CursorResult {
   fields: { name: string }[];
   rowCount: number | null;
 }
 
-/** Fetches one batch of `maxRows + 1` rows (the extra one tells truncation) and closes the portal. */
+/**
+ * A read fetches one batch of `maxRows + 1` rows (the extra one tells truncation) and closes the
+ * portal. Any other statement (a SELECT … FOR UPDATE locks every row it reads) is read to the end,
+ * keeping `maxRows` rows, as on MySQL.
+ */
 function readCursor(client: Client, sql: string, maxRows: number): Promise<QueryResult> {
   const cursor = client.query(new Cursor(sql, undefined, { rowMode: 'array' }));
-  const batch = Number.isFinite(maxRows) ? maxRows + 1 : 0;
+  const batch = Number.isFinite(maxRows) && isReadOnly(sql) ? maxRows + 1 : 0;
   return new Promise<QueryResult>((resolve, reject) => {
     const rows: CellValue[][] = [];
+    let seen = 0;
     const step = () =>
       cursor.read(batch || 10000, (err: Error | undefined, got: unknown[][], result: CursorResult) => {
         if (err) return reject(err);
+        seen += got.length;
         for (const row of got) if (rows.length < maxRows) rows.push(row.map(normalizeValue));
         const more = got.length === (batch || 10000);
         if (more && !batch) return step();
@@ -45,7 +51,7 @@ function readCursor(client: Client, sql: string, maxRows: number): Promise<Query
           const fields = result.fields ?? [];
           resolve(
             fields.length
-              ? { columns: fields.map((f) => f.name), rows, truncated: got.length > maxRows, ...(more && stopsWithCursor(sql) ? { stopped: true } : {}), durationMs: 0 }
+              ? { columns: fields.map((f) => f.name), rows, truncated: seen > maxRows, ...(more && stopsWithCursor(sql) ? { stopped: true } : {}), durationMs: 0 }
               : { columns: [], rows: [], affectedRows: result.rowCount ?? undefined, durationMs: 0 },
           );
         };

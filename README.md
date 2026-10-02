@@ -204,16 +204,17 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
 
 ## Limitations
 
-- A query result stops at `maxRows` rows: the rest is not held in memory. A MySQL read-only
-  statement is then stopped on the server (`KILL QUERY`); other MySQL statements run to the end,
-  their extra rows dropped as they arrive. PostgreSQL reads `SELECT`, `WITH`, `VALUES`, `TABLE`,
-  `SHOW` and `EXPLAIN` through a cursor; other statements (such as `INSERT … RETURNING`) and a
-  MySQL `CALL` are read whole. The data viewer always pages with `LIMIT`/`OFFSET`.
-- A read stopped on the server at `maxRows` says so in its result. A function it calls on each row
-  (one that writes, say) may then have run for only some of the rows on PostgreSQL, and is rolled
-  back with the statement on MySQL (InnoDB): raise `maxRows`, or aggregate
-  (`SELECT count(f(id)) FROM t`), to run it whole. On PostgreSQL a data-modifying `WITH` and
-  `EXPLAIN ANALYZE` still run to the end.
+- A query result stops at `maxRows` rows: the rest is not held in memory. A read-only statement is
+  then stopped on the server (MySQL `KILL QUERY`, PostgreSQL closes its cursor); any other one,
+  such as `SELECT … FOR UPDATE`, runs to the end, its extra rows dropped as they arrive. A `SELECT`
+  (or `WITH`, `SHOW`…) counts as read-only when it names no `INSERT`, `UPDATE`, `DELETE`, `MERGE`,
+  `INTO` nor row lock (`FOR UPDATE`, `FOR SHARE`…), even in a string. A MySQL `CALL` and
+  PostgreSQL statements other than `SELECT`, `WITH`, `VALUES`, `TABLE`, `SHOW` and `EXPLAIN` (such
+  as `INSERT … RETURNING`) are read whole. The data viewer always pages with `LIMIT`/`OFFSET`.
+- A read stopped at `maxRows` says so in its result: a function it calls on each row (one that
+  writes, say) may then have run for only some of the rows on PostgreSQL, and is rolled back with
+  the statement on MySQL (InnoDB). Raise `maxRows`, or aggregate (`SELECT count(f(id)) FROM t`), to
+  run it whole. `EXPLAIN ANALYZE` always runs to the end.
 - Cells are read-only; edit data with `UPDATE` statements.
 - A result of more than 50 rows draws only the rows in view, one line each (a line break shows as
   `↵`); hover a cell for its full value, double-click to copy it. Column widths are set from the

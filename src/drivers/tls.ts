@@ -11,8 +11,8 @@ export const serverName = (e: Endpoint) => e.sslServerName || e.host;
 
 /**
  * Node TLS options for `e`: verification on unless the connection opted out, with an
- * optional CA file and the name to check. An IP cannot go in SNI, so it is checked
- * through `checkServerIdentity` instead.
+ * optional CA file and the name to check. The name is checked by `checkServerIdentity`
+ * whatever host the driver dials; it also goes in SNI, unless it is an IP.
  */
 export function tlsOptions(e: Endpoint, read: (path: string) => Buffer = readFileSync): ConnectionOptions | undefined {
   if (!e.ssl) return undefined;
@@ -20,8 +20,9 @@ export function tlsOptions(e: Endpoint, read: (path: string) => Buffer = readFil
   const options: ConnectionOptions = { rejectUnauthorized: true };
   if (e.sslCaPath) options.ca = read(expandHome(e.sslCaPath));
   const name = serverName(e);
-  if (isIP(name)) options.checkServerIdentity = (_host: string, cert: PeerCertificate) => checkServerIdentity(name, cert);
-  else options.servername = name;
+  // pg replaces `servername` with the host it dials, which Node would then check.
+  options.checkServerIdentity = (_host: string, cert: PeerCertificate) => checkServerIdentity(name, cert);
+  if (!isIP(name)) options.servername = name;
   return options;
 }
 

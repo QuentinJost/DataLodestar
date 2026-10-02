@@ -217,6 +217,23 @@ test('mysql: TLS verification rejects an unknown CA and a wrong name, accepts th
   assert.deepEqual(await tryConnect({ sslVerify: false }), [[1]], 'opt-out still connects');
 });
 
+test('postgres: TLS checks the certificate name, not the host pg dials', { skip }, async () => {
+  // The server certificate is self-signed for db.internal (scripts/integration.sh); pg dials PG_HOST.
+  const tryConnect = async (extra: object) => {
+    const d = createDriver('postgres', { ...endpoint('postgres'), ssl: true, ...extra }) as SqlDriver;
+    await d.connect();
+    try {
+      return (await d.execute('SELECT 1', undefined)).rows;
+    } finally {
+      await d.close();
+    }
+  };
+  await assert.rejects(tryConnect({ sslVerify: true }), /self[- ]signed|unable to verify|certificate/i, 'unknown CA');
+  await assert.rejects(tryConnect({ sslVerify: true, sslCaPath: env.PG_CA }), /altnames|does not match|Hostname/i, 'host name not in the certificate');
+  assert.deepEqual(await tryConnect({ sslVerify: true, sslCaPath: env.PG_CA, sslServerName: 'db.internal' }), [[1]]);
+  assert.deepEqual(await tryConnect({ sslVerify: false }), [[1]], 'opt-out still connects');
+});
+
 test('postgres: databases, schemas, structure, per-database manual transactions', { skip }, async () => {
   await withDriver('postgres', undefined, async (d) => {
     const existing = await d.execute("SELECT 1 FROM pg_database WHERE datname = 'analytics'", undefined);

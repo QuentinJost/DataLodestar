@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { PeerCertificate } from 'tls';
+import { ConnectionOptions, PeerCertificate } from 'tls';
 import { Endpoint } from '../drivers/driver';
 import { mongoTlsOptions, mysqlTlsOptions, tlsOptions } from '../drivers/tls';
 
@@ -9,6 +9,13 @@ const pem = Buffer.from('-----BEGIN CERTIFICATE-----');
 const read = (path: string) => {
   assert.equal(path, '/etc/ca.pem');
   return pem;
+};
+const certFor = (name: string) => ({ subject: { CN: name }, subjectaltname: `DNS:${name}` }) as unknown as PeerCertificate;
+/** The options minus the name check, a closure tested on its own. */
+const withoutCheck = (o: ConnectionOptions | undefined) => {
+  const { checkServerIdentity, ...rest } = o!;
+  assert.equal(typeof checkServerIdentity, 'function', 'the name is always checked');
+  return rest;
 };
 
 test('no SSL: no TLS options for any driver', () => {
@@ -27,8 +34,16 @@ test('verification off keeps the old unchecked behaviour', () => {
 });
 
 test('pg / redis: verification on checks the chain and the host name, with an optional CA', () => {
-  assert.deepEqual(tlsOptions(base), { rejectUnauthorized: true, servername: 'db.example.net' });
-  assert.deepEqual(tlsOptions({ ...base, sslCaPath: '/etc/ca.pem' }, read), { rejectUnauthorized: true, ca: pem, servername: 'db.example.net' });
+  assert.deepEqual(withoutCheck(tlsOptions(base)), { rejectUnauthorized: true, servername: 'db.example.net' });
+  assert.deepEqual(withoutCheck(tlsOptions({ ...base, sslCaPath: '/etc/ca.pem' }, read)), { rejectUnauthorized: true, ca: pem, servername: 'db.example.net' });
+});
+
+test('pg: the certificate name is checked, not the host the driver dials', () => {
+  // pg sets `servername` to the host it dials: through SSH, often localhost.
+  const o = tlsOptions({ ...base, host: 'localhost', sslServerName: 'db.internal' })!;
+  assert.equal(o.servername, 'db.internal', 'SNI');
+  assert.equal(o.checkServerIdentity!('localhost', certFor('db.internal')), undefined);
+  assert.ok(o.checkServerIdentity!('localhost', certFor('localhost')) instanceof Error, 'a certificate for the dialled host only is refused');
 });
 
 test('through a tunnel the name comes from the config, not 127.0.0.1', () => {

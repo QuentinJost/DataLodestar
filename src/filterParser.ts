@@ -5,7 +5,7 @@ type Node = acorn.AnyNode;
 
 class FilterSyntaxError extends Error {}
 
-/** As in the shell: now, a string or milliseconds, or numbers (year, month, …) in local time. */
+/** As `new Date`, with or without `new`: now, a string or milliseconds, or numbers (year, month, …) in local time. */
 const date = (...a: unknown[]): Date => {
   if (a.length > 1 && a.some((x) => typeof x !== 'number')) throw new FilterSyntaxError('Date(year, month, …) takes numbers only.');
   return a.length === 0 ? new Date() : (Reflect.construct(Date, a) as Date);

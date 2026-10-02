@@ -38,7 +38,7 @@ test('editability: views, keyless tables and expression indexes are read-only', 
   assert.match((keyless as { reason: string }).reason, /no primary key/);
 });
 
-test('editability: binary and server-computed columns are shown, not edited; DEFAULT_GENERATED is not computed', () => {
+test('editability: binary, JSON-shown and server-computed columns are shown, not edited; DEFAULT_GENERATED is not computed', () => {
   const e = editability(
     table,
     structure(
@@ -51,13 +51,20 @@ test('editability: binary and server-computed columns are shown, not edited; DEF
         col('seq', { extra: 'identity always' }),
         col('seq2', { extra: 'identity by default' }),
         col('created_at', { type: 'datetime', extra: 'DEFAULT_GENERATED' }),
+        col('tags', { type: 'character varying(20)[]' }),
+        col('ints', { type: 'integer[]' }),
+        col('every', { type: 'interval' }),
+        col('pg_point', { type: 'point' }),
+        col('shape', { type: 'geometry' }),
+        col('route', { type: 'multilinestring' }),
+        col('pointless', { type: 'varchar(10)' }),
       ],
       [idx('PRIMARY', ['id'], { primary: true })],
     ),
   );
   assert.ok(e.editable);
   const editable = Object.entries(e.columns).filter(([, c]) => c.editable).map(([n]) => n);
-  assert.deepEqual(editable, ['seq2', 'created_at']);
+  assert.deepEqual(editable, ['seq2', 'created_at', 'pointless'], 'arrays, intervals and geometry show as JSON the server refuses');
 });
 
 const info: EditInfo = { key: ['id', 'uid'], columns: { id: { editable: true, nullable: false }, uid: { editable: false, nullable: false }, name: { editable: true, nullable: true } } };

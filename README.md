@@ -130,7 +130,8 @@ pages and reloads, until **Save** writes them or **Discard** drops them.
 - Values are sent as text and converted by the server (`true`, `2026-10-02 10:00`, JSON…). Dates
   and times show as the server writes them (PostgreSQL in the session's `TimeZone`, with its
   offset), so an edited one is written back as shown.
-  Binary columns, generated columns and `GENERATED ALWAYS` identities are not editable; a binary
+  Binary columns, arrays, `interval` and geometry types (shown as JSON, which the server does not
+  take back), generated columns and `GENERATED ALWAYS` identities are not editable; a binary
   key works. Double-clicking a cell that cannot be edited copies it, and `Ctrl+C` / `Cmd+C` copies
   the selected cell.
 

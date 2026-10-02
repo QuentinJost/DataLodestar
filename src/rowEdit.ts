@@ -22,6 +22,8 @@ export interface RowUpdate {
 
 /** Raw bytes are shown, never edited: a value typed as text would not round-trip. */
 const BINARY_TYPE = /^((tiny|medium|long)?blob|(var)?binary|bit|bytea)\b/i;
+/** Shown as JSON (arrays, intervals, geometry), which the server does not take back as input. */
+const NO_TEXT_ROUND_TRIP = /\[\]$|^(interval|point|line|lseg|box|path|polygon|circle|geometry|linestring|geometrycollection|multi(point|linestring|polygon))\b/i;
 /** Computed by the server: MySQL "VIRTUAL GENERATED" / "STORED GENERATED", PostgreSQL ones (see describeTable). */
 const COMPUTED = /\b(virtual|stored) generated\b|^generated stored$|^identity always$/i;
 
@@ -35,7 +37,7 @@ export function editability(ref: TableRef, st: TableStructure): Editability {
     st.indexes.filter((i) => i.unique && usable(i.columns)).sort((a, b) => a.columns.length - b.columns.length)[0];
   if (!key) return { editable: false, reason: 'no primary key or unique NOT NULL index to find the rows by' };
   const columns: EditInfo['columns'] = {};
-  for (const c of st.columns) columns[c.name] = { editable: !BINARY_TYPE.test(c.type) && !COMPUTED.test(c.extra), nullable: c.nullable };
+  for (const c of st.columns) columns[c.name] = { editable: !BINARY_TYPE.test(c.type) && !NO_TEXT_ROUND_TRIP.test(c.type) && !COMPUTED.test(c.extra), nullable: c.nullable };
   return { editable: true, key: key.columns, columns };
 }
 

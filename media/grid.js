@@ -118,6 +118,21 @@
       return;
     }
     container.replaceChildren(table);
+    const scroller = container.closest('.scroll') || container;
+    if (!scroller.clientHeight) {
+      // Drawn while hidden (another tab): nothing can be measured yet, so draw again once shown.
+      const observer = new ResizeObserver(() => {
+        if (!scroller.clientHeight) return;
+        observer.disconnect();
+        render(container, columns, rows, opts);
+      });
+      observer.observe(scroller);
+      container.__gridCleanup = () => {
+        observer.disconnect();
+        container.__gridCleanup = undefined;
+      };
+      return;
+    }
     virtualise(container, table, body, rows.length, columns.length + 1, drawRow);
   }
 

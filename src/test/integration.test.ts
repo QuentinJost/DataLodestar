@@ -542,6 +542,38 @@ for (const kind of ['mysql', 'postgres'] as DbKind[]) {
   });
 }
 
+/** A MySQL table for the save checks below, dropped afterwards; `fn` gets the save and a reader on another session. */
+async function withMysqlEditTable(fn: (d: SqlDriver, other: SqlDriver, save: (changes: Record<string, string | null>[]) => Promise<void>, names: () => Promise<unknown[]>) => Promise<void>) {
+  const ref: TableRef = { database: 'shop', name: 'edit_checks', type: 'table' };
+  await withDriver('mysql', 'shop', async (d) => {
+    await withDriver('mysql', 'shop', async (other) => {
+      const q = d.qualifiedName(ref);
+      await d.execute(`DROP TABLE IF EXISTS ${q}`, 'shop');
+      try {
+        await d.execute(`CREATE TABLE ${q} (id INT PRIMARY KEY, n INT NOT NULL UNIQUE, name VARCHAR(20))`, 'shop');
+        await d.execute(`INSERT INTO ${q} VALUES (1, 1, 'a'), (2, 2, 'b')`, 'shop');
+        const e = editability(ref, await d.describeTable(ref)) as EditInfo;
+        const save = (changes: Record<string, string | null>[]) => d.updateRows(ref, toUpdates(e, changes.map((c, i) => ({ key: [i + 1], changes: c }))));
+        const names = async () => (await other.execute(`SELECT name FROM ${q} ORDER BY id`, 'shop')).rows.map((r) => r[0]);
+        await fn(d, other, save, names);
+      } finally {
+        await d.setTxMode('auto');
+        await d.execute(`DROP TABLE IF EXISTS ${q}`, 'shop');
+      }
+    });
+  });
+}
+
+test('mysql: without a strict sql_mode, a value MySQL would truncate fails the save instead', { skip }, async () => {
+  await withMysqlEditTable(async (d, _other, save, names) => {
+    await d.execute("SET SESSION sql_mode = ''", 'shop');
+    await assert.rejects(save([{ name: 'x'.repeat(30) }]), (err: RowEditError) => err.index === 0 && /Row id = 1: Data truncated for column 'name'/.test(err.message));
+    assert.deepEqual(await names(), ['a', 'b']);
+    await save([{ name: 'fits' }]);
+    assert.deepEqual(await names(), ['fits', 'b']);
+  });
+});
+
 test('postgres: dates and times read as the server writes them, so an edit writes them back unchanged', { skip }, async () => {
   await withDriver('postgres', undefined, async (d) => {
     await d.execute("SET TimeZone = 'Europe/Paris'", undefined);

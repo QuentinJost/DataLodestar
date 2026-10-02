@@ -244,8 +244,16 @@ export class MysqlDriver implements SqlDriver {
         await applyUpdates(
           updates,
           (u) => updateStatement(this.qualifiedName(ref), u, (n) => this.quoteIdent(n), () => '?'),
-          // FOUND_ROWS (a mysql2 default): rows matched, even those already holding the value.
-          async (sql, params) => ((await conn.query(sql, params))[0] as mysql.ResultSetHeader).affectedRows,
+          async (sql, params) => {
+            const header = (await conn.query(sql, params))[0] as mysql.ResultSetHeader;
+            // Without a strict sql_mode, MySQL stores a truncated or zeroed value and only warns.
+            if (header.warningStatus > 0) {
+              const [warnings] = await conn.query('SHOW WARNINGS');
+              throw new Error((warnings as Row[]).map((w) => String(w.Message)).join('; '));
+            }
+            // FOUND_ROWS (a mysql2 default): rows matched, even those already holding the value.
+            return header.affectedRows;
+          },
         );
         await conn.query(inTx ? `RELEASE SAVEPOINT ${EDIT_SAVEPOINT}` : 'COMMIT');
       } catch (err) {

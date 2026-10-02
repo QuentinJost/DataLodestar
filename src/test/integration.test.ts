@@ -250,6 +250,16 @@ test('postgres: a SELECT stopped at maxRows says so: per-row writes stopped with
       const logged = Number((await d.execute('SELECT count(*) FROM side_log', undefined)).rows[0][0]);
       assert.ok(logged >= 1000 && logged < 5000, `only the rows read were logged (${logged})`);
       assert.equal((await d.execute('SELECT log_it(1)', undefined, 1000)).stopped, undefined, 'a statement that ran to the end');
+      // A data-modifying WITH and EXPLAIN ANALYZE run whole even when their rows are cut.
+      const count = async () => Number((await d.execute('SELECT count(*) FROM side_log', undefined)).rows[0][0]);
+      let before = await count();
+      const cte = await d.execute('WITH w AS (INSERT INTO side_log SELECT i FROM generate_series(1, 3000) i RETURNING i) SELECT i FROM w', undefined, 1000);
+      assert.deepEqual([cte.truncated, cte.stopped], [true, undefined], 'data-modifying WITH');
+      assert.equal(await count(), before + 3000);
+      before = await count();
+      const plan = await d.execute('EXPLAIN ANALYZE SELECT log_it(i) FROM generate_series(1, 50) i', undefined, 1);
+      assert.deepEqual([plan.truncated, plan.stopped], [true, undefined], 'EXPLAIN ANALYZE');
+      assert.equal(await count(), before + 50);
     } finally {
       await d.execute('DROP FUNCTION log_it', undefined);
       await d.execute('DROP TABLE side_log', undefined);

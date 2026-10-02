@@ -21,6 +21,9 @@ export const holdsSessionState = (sql: string) =>
 /** Statements read through a cursor, which stops after `maxRows` rows; the rest are buffered. */
 const ROW_STATEMENTS = new Set(['select', 'with', 'values', 'table', 'show', 'explain']);
 
+/** A closed cursor stops a read; a data-modifying WITH and EXPLAIN (ANALYZE) run whole regardless. */
+const stopsWithCursor = (sql: string) => isReadOnly(sql) && leadingKeyword(sql) !== 'explain';
+
 interface CursorResult {
   fields: { name: string }[];
   rowCount: number | null;
@@ -42,7 +45,7 @@ function readCursor(client: Client, sql: string, maxRows: number): Promise<Query
           const fields = result.fields ?? [];
           resolve(
             fields.length
-              ? { columns: fields.map((f) => f.name), rows, truncated: got.length > maxRows, ...(more ? { stopped: true } : {}), durationMs: 0 }
+              ? { columns: fields.map((f) => f.name), rows, truncated: got.length > maxRows, ...(more && stopsWithCursor(sql) ? { stopped: true } : {}), durationMs: 0 }
               : { columns: [], rows: [], affectedRows: result.rowCount ?? undefined, durationMs: 0 },
           );
         };

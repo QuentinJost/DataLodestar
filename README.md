@@ -209,10 +209,11 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   their extra rows dropped as they arrive. PostgreSQL reads `SELECT`, `WITH`, `VALUES`, `TABLE`,
   `SHOW` and `EXPLAIN` through a cursor; other statements (such as `INSERT … RETURNING`) and a
   MySQL `CALL` are read whole. The data viewer always pages with `LIMIT`/`OFFSET`.
-- A statement stopped at `maxRows` does not run to the end, and its result says so: what it does
-  for each row (a function that writes, say) happens only for the rows read on PostgreSQL, and is
-  rolled back with the statement on MySQL (InnoDB). A data-modifying PostgreSQL `WITH` still runs
-  whole. Raise `maxRows`, or aggregate (`SELECT count(f(id)) FROM t`), to run such a statement whole.
+- A read stopped on the server at `maxRows` says so in its result. A function it calls on each row
+  (one that writes, say) may then have run for only some of the rows on PostgreSQL, and is rolled
+  back with the statement on MySQL (InnoDB): raise `maxRows`, or aggregate
+  (`SELECT count(f(id)) FROM t`), to run it whole. On PostgreSQL a data-modifying `WITH` and
+  `EXPLAIN ANALYZE` still run to the end.
 - Cells are read-only; edit data with `UPDATE` statements.
 - A result of more than 50 rows draws only the rows in view, one line each (a line break shows as
   `↵`); hover a cell for its full value, double-click to copy it. Column widths are set from the

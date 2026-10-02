@@ -15,7 +15,7 @@ export const SESSION_IDLE_MS = 10 * 60 * 1000;
 export const holdsSessionState = (sql: string) =>
   ['set', 'prepare', 'listen', 'declare', 'load'].includes(leadingKeyword(sql)) ||
   (leadingKeyword(sql) === 'create' && /^\s*create\s+(global\s+|local\s+)?temp(orary)?\b/i.test(sql)) ||
-  /\binto\s+temp(orary)?\b/i.test(sql) ||
+  /\binto\s+((global|local)\s+)?temp(orary)?\b|\bpg_temp\./i.test(sql) ||
   /\b(pg_(try_)?advisory_(xact_)?lock(_shared)?|set_config)\s*\(/i.test(sql);
 
 /** Statements read through a cursor, which stops after `maxRows` rows; the rest are buffered. */

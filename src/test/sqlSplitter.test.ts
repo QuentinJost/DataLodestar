@@ -89,6 +89,9 @@ test('postgres: statements that leave state in the session keep it open when idl
     'SELECT pg_try_advisory_lock_shared(1, 2)',
     'SELECT 1 AS i INTO TEMP t',
     'SELECT * INTO TEMPORARY TABLE t FROM src',
+    'SELECT 1 INTO LOCAL TEMP t',
+    'SELECT 1 INTO GLOBAL TEMPORARY TABLE t',
+    'CREATE TABLE pg_temp.t (i int)',
   ];
   for (const sql of kept) assert.equal(holdsSessionState(sql), true, sql);
   for (const sql of ['SELECT 1', 'INSERT INTO temp_log VALUES (1)', 'SELECT pg_advisory_unlock(1)', 'CREATE TABLE t (i int)']) {

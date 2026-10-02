@@ -112,16 +112,17 @@
         const column = msg.columns[c];
         return e && Object.prototype.hasOwnProperty.call(e.changes, column) ? { value: e.changes[column] } : undefined;
       },
-      onChange: (r, c, text) => setCell(r, c, text),
+      // Bound to this page: a page that arrives while a cell is being edited is another set of rows.
+      onChange: (r, c, text) => setCell(msg, r, c, text),
     };
   }
 
-  /** Records `text` (or null, or undefined to undo) as the new value of a cell of the current page. */
-  function setCell(r, c, text) {
-    const keys = keyIndexes(lastData.columns);
-    const row = lastData.rows[r];
+  /** Records `text` (or null, or undefined to undo) as the new value of a cell of the page `data`. */
+  function setCell(data, r, c, text) {
+    const keys = keyIndexes(data.columns);
+    const row = data.rows[r];
     const id = rowId(keys, row);
-    const column = lastData.columns[c];
+    const column = data.columns[c];
     const entry = state.edits[id] || { key: keys.map((i) => row[i]), changes: {} };
     if (text === undefined || sameAsRead(row[c], text)) delete entry.changes[column];
     else entry.changes[column] = text;
@@ -163,6 +164,9 @@
   }
 
   function renderData(msg) {
+    // An open cell editor belongs to the page being replaced: its text goes to that page's row.
+    const open = document.querySelector('textarea.cell-editor');
+    if (open) open.blur();
     if (msg.documents && !msg.rows.length) msg.rows = SqlMongoRows.rowsFromDocuments(msg.columns, msg.documents);
     lastData = msg;
     $('apply').disabled = false;
@@ -292,12 +296,14 @@
   });
   $('setNull').addEventListener('click', () => {
     if (!selectedCell) return;
-    setCell(selectedCell.r, selectedCell.c, null);
+    if (selectedCell.data !== lastData) return;
+    setCell(selectedCell.data, selectedCell.r, selectedCell.c, null);
     grid.refresh(selectedCell.r);
   });
   $('revertCell').addEventListener('click', () => {
     if (!selectedCell) return;
-    setCell(selectedCell.r, selectedCell.c, undefined);
+    if (selectedCell.data !== lastData) return;
+    setCell(selectedCell.data, selectedCell.r, selectedCell.c, undefined);
     grid.refresh(selectedCell.r);
   });
   $('saveEdits').addEventListener('click', () => {

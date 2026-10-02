@@ -172,3 +172,19 @@ test('editing: a read-only table says why and opens no editor', async () => {
   assert.equal(await page.isHidden('#setNull'), true);
   await page.close();
 });
+
+test('editing: a page that arrives while a cell is being edited keeps the text on the row it was typed for', async () => {
+  const page = await editableViewer();
+  await page.dblclick(cell(0, 1));
+  await page.fill('textarea.cell-editor', 'typed for id 1');
+  // A reload (end of a transaction) brings the same rows in another order before Enter.
+  const rows = [[3, 'name 3', { b: '00ff', n: 2 }], [2, null, { b: '00ff', n: 2 }], [1, 'name 1', { b: '00ff', n: 2 }]];
+  await send(page, { type: 'data', columns: ['id', 'name', 'photo'], rows, hasMore: false, durationMs: 1, text: 'SELECT', quoted: {} });
+  await page.waitForFunction(() => document.querySelector('#grid tbody tr[data-r="0"] td:nth-child(2)').textContent === '3');
+  assert.equal(await page.$('textarea.cell-editor'), null, 'the editor of the replaced page is closed');
+  assert.equal(await page.textContent(cell(2, 1)), 'typed for id 1', 'id 1 is now the third row');
+  assert.equal(await page.textContent(cell(0, 1)), 'name 3');
+  await page.click('#saveEdits');
+  assert.deepEqual((await posted(page, 'save'))[0].edits, [{ key: [1], changes: { name: 'typed for id 1' } }]);
+  await page.close();
+});

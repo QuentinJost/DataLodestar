@@ -1,4 +1,4 @@
-// The few `vscode` APIs the tree provider touches, for unit tests outside VS Code.
+// The few `vscode` APIs the tree provider and the panels touch, for unit tests outside VS Code.
 import { EventEmitter as NodeEmitter } from 'events';
 
 export class EventEmitter<T> {
@@ -42,6 +42,73 @@ export class ThemeColor {
 export class MarkdownString {
   constructor(public value: string) {}
 }
+
+export const ViewColumn = { Active: -1, Beside: -2 };
+
+export const Uri = {
+  joinPath: (base: { path: string }, ...parts: string[]) => ({ path: [base.path, ...parts].join('/') }),
+};
+
+/** A webview panel driven by the test: what its page posts, and its visibility. */
+export class FakeWebviewPanel {
+  visible = true;
+  iconPath?: unknown;
+  /** Messages posted to the page, in order. */
+  readonly posted: { type: string; [k: string]: unknown }[] = [];
+  private readonly fromPageEmitter = new EventEmitter<unknown>();
+  private readonly viewStateEmitter = new EventEmitter<{ webviewPanel: FakeWebviewPanel }>();
+  private readonly disposeEmitter = new EventEmitter<void>();
+  readonly webview = {
+    html: '',
+    cspSource: 'vscode-webview:',
+    asWebviewUri: (uri: unknown) => uri,
+    postMessage: async (msg: { type: string }) => (this.posted.push(msg), true),
+    onDidReceiveMessage: this.fromPageEmitter.event,
+  };
+  readonly onDidChangeViewState = this.viewStateEmitter.event;
+  readonly onDidDispose = this.disposeEmitter.event;
+
+  reveal(): void {
+    this.setVisible(true);
+  }
+
+  fromPage(msg: unknown): void {
+    this.fromPageEmitter.fire(msg);
+  }
+
+  setVisible(visible: boolean): void {
+    if (this.visible === visible) return;
+    this.visible = visible;
+    this.viewStateEmitter.fire({ webviewPanel: this });
+  }
+}
+
+/** Panels created by `window.createWebviewPanel`, newest last. */
+export const panels: FakeWebviewPanel[] = [];
+/** Calls to `commands.executeCommand`. */
+export const executed: unknown[][] = [];
+/** Button the next message box answers with; undefined = dismissed. */
+export const answers: { next?: string } = {};
+
+export const window = {
+  createWebviewPanel: () => {
+    const panel = new FakeWebviewPanel();
+    panels.push(panel);
+    return panel;
+  },
+  showErrorMessage: async () => answers.next,
+  showWarningMessage: async () => answers.next,
+  showInformationMessage: async () => answers.next,
+  setStatusBarMessage: () => undefined,
+};
+
+export const commands = {
+  executeCommand: async (...args: unknown[]) => void executed.push(args),
+};
+
+export const workspace = {
+  getConfiguration: () => ({ get: <T>(_key: string, fallback: T) => fallback }),
+};
 
 /** Makes `require('vscode')` resolve to this stub. */
 export function installVscodeStub(): void {

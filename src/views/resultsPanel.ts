@@ -51,6 +51,10 @@ export class ResultsPanel {
           vscode.window.setStatusBarMessage('Copied to clipboard', 2000);
         }
       });
+      this.panel.onDidChangeViewState((e) => {
+        // Not retained: a hidden page is gone, so results wait for its next 'ready'.
+        if (!e.webviewPanel.visible) this.ready = false;
+      });
       this.panel.onDidDispose(() => {
         this.panel = undefined;
         this.last = undefined;

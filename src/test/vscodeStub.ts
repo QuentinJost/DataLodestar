@@ -139,6 +139,8 @@ export const commands = {
 
 export const workspace = {
   getConfiguration: () => ({ get: <T>(_key: string, fallback: T) => fallback }),
+  /** Open documents, set by the test. */
+  textDocuments: [] as unknown[],
 };
 
 /** Makes `require('vscode')` resolve to this stub. */

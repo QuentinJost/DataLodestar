@@ -285,12 +285,12 @@
         },
         {
           "command": "dataLodestar.commit",
-          "when": "dataLodestar.editorTxPending",
+          "when": "resourcePath in dataLodestar.pendingDocs",
           "group": "navigation@3"
         },
         {
           "command": "dataLodestar.rollback",
-          "when": "dataLodestar.editorTxPending",
+          "when": "resourcePath in dataLodestar.pendingDocs",
           "group": "navigation@4"
         }
       ],

@@ -26,9 +26,12 @@ export class StatusBar implements vscode.Disposable {
     const binding = editor && this.runner.binding(editor.document);
     // Keybindings for JavaScript / plain-text editors only apply to bound documents.
     void vscode.commands.executeCommand('setContext', 'dataLodestar.editorBound', !!binding);
-    // Commit / Rollback buttons in the editor title while its connection has pending changes.
-    const pending = !!binding && !!this.sessions.current(binding.connId)?.driver.pendingTransaction;
-    void vscode.commands.executeCommand('setContext', 'dataLodestar.editorTxPending', pending);
+    const hasPending = (b?: { connId: string }) => !!b && !!this.sessions.current(b.connId)?.driver.pendingTransaction;
+    const pending = hasPending(binding);
+    // Commit / Rollback buttons in the title of each editor group whose document waits: a key set for
+    // the active editor only would show them over every group. Matched against `resourcePath` (fsPath).
+    const pendingDocs = vscode.workspace.textDocuments.filter((d) => hasPending(this.runner.binding(d))).map((d) => d.uri.fsPath);
+    void vscode.commands.executeCommand('setContext', 'dataLodestar.pendingDocs', pendingDocs);
     if (!editor || (editor.document.languageId !== 'sql' && !binding)) {
       this.bindingItem.hide();
       this.txItem.hide();

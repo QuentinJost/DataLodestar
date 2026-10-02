@@ -237,8 +237,9 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
 npm install
 npm test                         # compile + unit tests (integration tests are skipped)
 ./scripts/integration.sh         # throwaway MySQL 8.4, PostgreSQL 17, MongoDB 8 (replica set), Redis 7, sshd
+./scripts/webview.sh             # webview scripts in headless Chromium (Playwright image)
 ```
 
-`integration.sh` needs Docker; set `HOST_DIR` when the daemon sees this folder under another path
-(e.g. from inside a container), and `KEEP=1` to reuse the servers between runs.
+Both scripts need Docker; set `HOST_DIR` when the daemon sees this folder under another path
+(e.g. from inside a container), and `KEEP=1` to reuse the servers of `integration.sh` between runs.
 Press `F5` with the folder open in VS Code to start an Extension Development Host.

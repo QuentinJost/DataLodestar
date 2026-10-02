@@ -3,11 +3,19 @@ import { Binary, Decimal128, Int32, Long, MaxKey, MinKey, ObjectId, Timestamp, U
 
 type Node = acorn.AnyNode;
 
+class FilterSyntaxError extends Error {}
+
+/** As in the shell: now, a string or milliseconds, or numbers (year, month, …) in local time. */
+const date = (...a: unknown[]): Date => {
+  if (a.length > 1 && a.some((x) => typeof x !== 'number')) throw new FilterSyntaxError('Date(year, month, …) takes numbers only.');
+  return a.length === 0 ? new Date() : (Reflect.construct(Date, a) as Date);
+};
+
 /** Shell helpers the viewer accepts, called with already-parsed literal arguments. */
 const HELPERS: Record<string, (...a: unknown[]) => unknown> = {
   ObjectId: (hex?: unknown) => (hex === undefined ? new ObjectId() : new ObjectId(String(hex))),
-  ISODate: (s?: unknown) => (s === undefined ? new Date() : new Date(s as string | number)),
-  Date: (s?: unknown) => (s === undefined ? new Date() : new Date(s as string | number)),
+  ISODate: date,
+  Date: date,
   UUID: (s?: unknown) => (s === undefined ? new UUID() : new UUID(String(s))),
   NumberLong: (v: unknown) => Long.fromString(String(v)),
   NumberInt: (v: unknown) => new Int32(Number(v)),
@@ -18,8 +26,6 @@ const HELPERS: Record<string, (...a: unknown[]) => unknown> = {
   MinKey: () => new MinKey(),
   MaxKey: () => new MaxKey(),
 };
-
-class FilterSyntaxError extends Error {}
 
 const reject = (node: Node, what: string): never => {
   throw new FilterSyntaxError(`${what} is not allowed here (position ${node.start}): only { key: value } objects, arrays, literals and ${Object.keys(HELPERS).join(', ')}.`);

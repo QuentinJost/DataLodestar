@@ -35,6 +35,14 @@ test('every helper builds its BSON type', () => {
   assert.ok(v.o instanceof ObjectId);
 });
 
+test('Date with numbers is a local date, as in the shell', () => {
+  const f = parseFilter('{ a: new Date(2026, 0, 1), b: Date(2026, 11, 31, 23, 59) }') as { a: Date; b: Date };
+  assert.deepEqual([f.a.getFullYear(), f.a.getMonth(), f.a.getDate(), f.a.getHours()], [2026, 0, 1, 0]);
+  assert.deepEqual([f.b.getFullYear(), f.b.getMonth(), f.b.getDate(), f.b.getHours(), f.b.getMinutes()], [2026, 11, 31, 23, 59]);
+  assert.equal((parseFilter('{ a: new Date(0) }').a as Date).getTime(), 0, 'one number stays milliseconds');
+  assert.throws(() => parseFilter("{ a: new Date(2026, '1') }"), /numbers only/);
+});
+
 test('anything that could run code is refused', () => {
   const refused = [
     "{ a: require('child_process') }",

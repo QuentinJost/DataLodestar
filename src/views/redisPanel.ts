@@ -56,8 +56,8 @@ export class RedisPanel {
   ) {
     const title = `db${database} — ${connName}`;
     this.panel = vscode.window.createWebviewPanel('dataLodestar.redis', title, vscode.ViewColumn.Active, {
+      // Not retained when hidden: the page rescans from its saved pattern and key.
       enableScripts: true,
-      retainContextWhenHidden: true,
       localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')],
     });
     this.panel.iconPath = new vscode.ThemeIcon('symbol-key');
@@ -79,7 +79,10 @@ export class RedisPanel {
   private async onMessage(msg: { type: string; [k: string]: unknown }): Promise<void> {
     switch (msg.type) {
       case 'ready':
-        this.post({ type: 'init', binaryDisplay: vscode.workspace.getConfiguration('dataLodestar').get<string>('binaryDisplay', 'auto') });
+        {
+          const settings = vscode.workspace.getConfiguration('dataLodestar');
+          this.post({ type: 'init', binaryDisplay: settings.get<string>('binaryDisplay', 'auto'), maxCellChars: settings.get<number>('maxCellChars', 500) });
+        }
         break;
       case 'scan':
         try {

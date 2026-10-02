@@ -217,17 +217,25 @@ test('ssh: tunnels to MongoDB and Redis', { skip }, async () => {
   const secrets = { sshPassword: env.SSH_PASSWORD };
   const trust = async () => true;
 
+  const { statSync, existsSync } = await import('fs');
+  const { dirname } = await import('path');
   const mt = await SshTunnel.open(cfg, secrets, env.MONGO_HOST!, 27017, trust);
-  const m = new MongoDriver(mongoEndpoint('shop', '127.0.0.1', mt.localPort));
+  const local = await mt.listen();
+  assert.equal(local.port, 0, 'a Unix socket, not a TCP port');
+  assert.equal(statSync(dirname(local.host)).mode & 0o777, 0o700, 'in a directory only this user can open');
+  const m = new MongoDriver(mongoEndpoint('shop', local.host, local.port));
   await m.connect();
   assert.ok((await m.listDatabases(false)).includes('shop'));
   await m.close();
   mt.close();
+  assert.equal(existsSync(dirname(local.host)), false, 'socket directory removed on close');
 
   const rt = await SshTunnel.open(cfg, secrets, env.REDIS_HOST!, 6379, trust);
-  const r = new RedisDriver(redisEndpoint('127.0.0.1', rt.localPort));
+  const r = new RedisDriver({ ...redisEndpoint(), stream: () => rt.connect() });
   await r.connect();
   assert.deepEqual((await r.execute(['PING'], '0')).rows, [['PONG']]);
+  assert.deepEqual((await r.execute(['SET', 'through', 'ssh'], '0')).rows.length, 1);
+  assert.deepEqual((await r.getValue('0', 'through')).text, 'ssh', 'meta connection has its own channel');
   await r.close();
   rt.close();
 });

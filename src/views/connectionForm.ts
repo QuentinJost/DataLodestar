@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import * as vscode from 'vscode';
 import { ConnectionStore } from '../connectionStore';
-import { connectWith, SessionManager } from '../sessionManager';
+import { connectWith, SessionManager, showChangedHostKey } from '../sessionManager';
 import { ConnectionConfig, ConnectionSecrets } from '../types';
 import { splitUriPassword } from '../uriCredentials';
 import { renderPage } from './webview';
@@ -27,7 +27,12 @@ const BODY = `
       <select id="txMode"><option value="auto">Auto-commit</option><option value="manual">Manual (commit / rollback)</option></select>
     </div>
     <div class="row inline"><input id="savePassword" type="checkbox"><label for="savePassword">Save passwords in the OS keychain</label></div>
-    <div class="row inline"><input id="ssl" type="checkbox"><label for="ssl">Use SSL/TLS (certificate not verified)</label></div>
+    <div class="row inline" id="sslRow"><input id="ssl" type="checkbox"><label for="ssl">Use SSL/TLS</label></div>
+    <div class="row inline" id="sslVerifyRow"><input id="sslVerify" type="checkbox"><label for="sslVerify">Verify the server certificate</label></div>
+    <div class="row" id="sslCaRow"><label for="sslCa">CA certificate</label>
+      <div class="pair pair-button"><input id="sslCa" type="text" spellcheck="false" placeholder="optional PEM file, for a private or self-signed CA"><button type="button" id="browseCa" class="secondary">Browse…</button></div>
+    </div>
+    <div class="row" id="sslNameRow"><label for="sslServerName">Certificate name</label><input id="sslServerName" type="text" spellcheck="false" placeholder="optional; default: the host above"></div>
     <div class="row inline" id="showSystemRow"><input id="showSystem" type="checkbox"><label for="showSystem">Show system databases</label></div>
     <div class="row"><span></span><span class="hint" id="kindHint"></span></div>
   </fieldset>
@@ -107,6 +112,11 @@ export class ConnectionForm {
         if (picked?.[0]) this.post({ type: 'keyPath', path: picked[0].fsPath });
         break;
       }
+      case 'browseCa': {
+        const picked = await vscode.window.showOpenDialog({ canSelectMany: false, openLabel: 'Use this CA', filters: { 'PEM certificates': ['pem', 'crt', 'cer'], 'All files': ['*'] } });
+        if (picked?.[0]) this.post({ type: 'caPath', path: picked[0].fsPath });
+        break;
+      }
       case 'test':
         await this.test(this.build(msg.config!), msg.secrets ?? {});
         break;
@@ -123,7 +133,8 @@ export class ConnectionForm {
       return config;
     }
     const sshHost = `${config.ssh.host}:${config.ssh.port}`;
-    const previous = this.existing?.ssh;
+    // Read again: the pinned key may have been reset while the form was open.
+    const previous = this.existing && this.store.get(this.existing.id)?.ssh;
     if (this.trustedFingerprint?.host === sshHost) config.ssh.hostFingerprint = this.trustedFingerprint.value;
     else if (previous && `${previous.host}:${previous.port}` === sshHost) config.ssh.hostFingerprint = previous.hostFingerprint;
     return config;
@@ -154,11 +165,12 @@ export class ConnectionForm {
     try {
       const started = Date.now();
       const { driver, tunnel } = await connectWith(config, secrets, async (fp, expected) => {
+        if (expected) {
+          void showChangedHostKey(config, `${config.ssh!.host}:${config.ssh!.port}`, expected, fp);
+          return false;
+        }
         const trust = 'Trust this key';
-        const text = expected
-          ? `SSH HOST KEY CHANGED.\nExpected ${expected}\nReceived ${fp}`
-          : `Unknown SSH host key:\n${fp}\nTrust it?`;
-        return (await vscode.window.showWarningMessage(text, { modal: true }, trust)) === trust;
+        return (await vscode.window.showWarningMessage(`Unknown SSH host key:\n${fp}\nTrust it?`, { modal: true }, trust)) === trust;
       });
       try {
         const dbs = await driver.listDatabases(config.showSystemDatabases);

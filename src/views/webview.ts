@@ -12,7 +12,7 @@ export function renderPage(webview: vscode.Webview, extensionUri: vscode.Uri, ti
     `img-src ${webview.cspSource} data:`,
     `font-src ${webview.cspSource}`,
   ].join('; ');
-  const tags = ['binaryFormat.js', 'grid.js', ...scripts].map((s) => `<script nonce="${nonce}" src="${uri(s)}"></script>`).join('\n');
+  const tags = ['binaryFormat.js', 'mongoRows.js', 'grid.js', ...scripts].map((s) => `<script nonce="${nonce}" src="${uri(s)}"></script>`).join('\n');
   return `<!DOCTYPE html>
 <html lang="en">
 <head>

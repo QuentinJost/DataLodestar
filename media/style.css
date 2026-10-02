@@ -86,6 +86,7 @@ table.grid tbody tr:hover td { background: var(--vscode-list-hoverBackground); }
 table.grid td.num { text-align: right; }
 table.grid td.selected { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 .null { opacity: 0.45; font-style: italic; }
+table.grid tr.spacer td { border: none; padding: 0; }
 table.grid td.bin { color: var(--vscode-debugTokenExpression-number, inherit); }
 select.binfmt { margin-left: 6px; padding: 0 2px; font-size: 0.85em; font-weight: normal; vertical-align: middle; }
 

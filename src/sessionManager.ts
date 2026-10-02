@@ -29,6 +29,9 @@ export class SessionManager implements vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<string>();
   /** Fires the connection id when connected / mode / pending-transaction state changes. */
   readonly onDidChange = this.changed.event;
+  private readonly schemaChanged = new vscode.EventEmitter<string>();
+  /** Fires the connection id after a statement that may add, drop or rename objects, and when pending changes end. */
+  readonly onDidChangeSchema = this.schemaChanged.event;
 
   constructor(private readonly store: ConnectionStore) {}
 
@@ -106,20 +109,18 @@ export class SessionManager implements vscode.Disposable {
     return secrets;
   }
 
+  /**
+   * First connection: trust on first use. A changed key is never accepted from this
+   * prompt: the pinned key has to be reset on purpose (dataLodestar.resetHostKey).
+   */
   private async confirmHostKey(config: ConnectionConfig, fingerprint: string, expected: string | undefined): Promise<boolean> {
     const host = `${config.ssh!.host}:${config.ssh!.port}`;
+    if (expected) {
+      void showChangedHostKey(config, host, expected, fingerprint);
+      return false;
+    }
     const trust = 'Trust this key';
-    const choice = expected
-      ? await vscode.window.showErrorMessage(
-          `SSH HOST KEY CHANGED for ${host}.\nExpected ${expected}\nReceived ${fingerprint}\nSomeone may be intercepting the connection.`,
-          { modal: true },
-          trust,
-        )
-      : await vscode.window.showWarningMessage(
-          `First connection to ${host}. Host key fingerprint:\n${fingerprint}\nTrust it?`,
-          { modal: true },
-          trust,
-        );
+    const choice = await vscode.window.showWarningMessage(`First connection to ${host}. Host key fingerprint:\n${fingerprint}\nTrust it?`, { modal: true }, trust);
     return choice === trust;
   }
 
@@ -171,19 +172,27 @@ export class SessionManager implements vscode.Disposable {
     this.emit(id);
   }
 
+  notifySchemaChange(id: string): void {
+    this.schemaChanged.fire(id);
+  }
+
   /** Re-evaluates state after statements ran; fires only on an actual change. */
   emit(id: string): void {
     const s = this.sessions.get(id);
     const state = s ? `on|${s.txMode}|${s.driver.pendingTransaction}` : 'off';
-    if (this.lastState.get(id) === state) return;
+    const before = this.lastState.get(id);
+    if (before === state) return;
     this.lastState.set(id, state);
     this.changed.fire(id);
+    // The tree lists on its own connection, blind to uncommitted DDL (PostgreSQL): re-list once the transaction ends.
+    if (s && before?.endsWith('|true') && !s.driver.pendingTransaction) this.schemaChanged.fire(id);
   }
 
   dispose(): void {
     for (const s of this.sessions.values()) void s.close();
     this.sessions.clear();
     this.changed.dispose();
+    this.schemaChanged.dispose();
   }
 }
 
@@ -202,6 +211,10 @@ export async function connectWith(
     password: secrets.password,
     database: config.database,
     ssl: config.ssl,
+    sslVerify: config.sslVerify ?? false,
+    sslCaPath: config.sslCaPath || undefined,
+    // Kept when a tunnel replaces the host (MongoDB): the certificate names the real server.
+    sslServerName: config.sslServerName || config.host,
     uri: config.uri || undefined,
     authSource: config.authSource || undefined,
   };
@@ -210,9 +223,13 @@ export async function connectWith(
       throw new Error('A connection string cannot go through the SSH tunnel: clear it and use host / port.');
     }
     if (config.ssh?.enabled) {
-      tunnel = await SshTunnel.open(config.ssh, secrets, config.host, config.port, checkHostKey);
-      endpoint.host = '127.0.0.1';
-      endpoint.port = tunnel.localPort;
+      const t = (tunnel = await SshTunnel.open(config.ssh, secrets, config.host, config.port, checkHostKey));
+      if (config.kind === 'mongodb') {
+        // The MongoDB driver only dials an address: a private local socket.
+        Object.assign(endpoint, await t.listen());
+      } else {
+        endpoint.stream = () => t.connect();
+      }
     }
     driver = createDriver(config.kind, endpoint);
     await driver.connect();
@@ -223,4 +240,17 @@ export async function connectWith(
     tunnel?.close();
     throw err;
   }
+}
+
+/** Refuses a changed SSH host key. Nothing accepts it from here: the reset command asks again, then the next connection does. */
+export async function showChangedHostKey(config: ConnectionConfig, host: string, expected: string, received: string): Promise<void> {
+  const reset = 'Reset Pinned SSH Host Key…';
+  const choice = await vscode.window.showErrorMessage(
+    `SSH HOST KEY CHANGED for ${host}: the connection was refused.\nExpected ${expected}\nReceived ${received}\n` +
+      'Someone may be intercepting the connection. If the server key really changed (reinstall, new host), ' +
+      'check the new fingerprint with its administrator, then run "DataLodestar: Reset Pinned SSH Host Key".',
+    { modal: true },
+    reset,
+  );
+  if (choice === reset) await vscode.commands.executeCommand('dataLodestar.resetHostKey', config.id);
 }

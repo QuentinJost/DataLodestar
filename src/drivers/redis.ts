@@ -1,6 +1,10 @@
 import Redis, { RedisOptions } from 'ioredis';
+import AbstractConnector from 'ioredis/built/connectors/AbstractConnector';
+import { Duplex } from 'stream';
+import { connect as tlsConnect, ConnectionOptions } from 'tls';
 import { CellValue, QueryResult, RedisKeyInfo, RedisValue, TxMode } from '../types';
 import { BaseDriver, BINARY_LIMIT, Endpoint, Mutex } from './driver';
+import { tlsOptions } from './tls';
 
 /** Commands that would turn the session into a push-only connection. */
 const REFUSED = new Set(['SUBSCRIBE', 'PSUBSCRIBE', 'SSUBSCRIBE', 'MONITOR', 'SYNC', 'PSYNC']);
@@ -58,13 +62,14 @@ export class RedisDriver implements BaseDriver {
       username: e.user || undefined,
       password: e.password || undefined,
       db,
-      tls: e.ssl ? { rejectUnauthorized: false } : undefined,
+      tls: tlsOptions(e),
       lazyConnect: true,
       connectTimeout: 15000,
       maxRetriesPerRequest: 0,
       enableOfflineQueue: false,
       retryStrategy: () => null, // a lost session is reported, not silently re-opened (MULTI/SELECT state)
       connectionName: 'datalodestar', // Redis refuses spaces in client names
+      Connector: e.stream ? streamConnector(e.stream, tlsOptions(e)) : undefined,
     };
     this.session = new Redis(options);
     this.meta = new Redis(options);
@@ -124,7 +129,7 @@ export class RedisDriver implements BaseDriver {
         const args: (string | number)[] = [next, 'MATCH', pattern || '*', 'COUNT', SCAN_BATCH];
         if (type) args.push('TYPE', type);
         const [c, batch] = (await r.call('SCAN', ...args)) as [string, string[]];
-        names.push(...batch);
+        for (const name of batch) names.push(name);
         next = c;
         if (next === '0' || names.length >= wanted) break;
       }
@@ -256,13 +261,32 @@ export class RedisDriver implements BaseDriver {
   }
 }
 
-async function scanAll(r: Redis, cmd: 'HSCAN' | 'SSCAN', key: string, wanted: number): Promise<Buffer[]> {
+/** ioredis connector over a stream the caller opens (an SSH channel), with TLS on top when asked. */
+function streamConnector(open: () => Promise<Duplex>, tls: ConnectionOptions | undefined) {
+  return class StreamConnector extends AbstractConnector {
+    constructor(options: unknown) {
+      super((options as { disconnectTimeout?: number }).disconnectTimeout ?? 2000);
+    }
+    async connect() {
+      this.connecting = true;
+      const raw = await open();
+      this.stream = (tls ? tlsConnect({ ...tls, socket: raw }) : raw) as never;
+      return this.stream;
+    }
+  };
+}
+
+/** HSCAN / SSCAN until `wanted` items; items are pushed one by one (a spread of a huge batch overflows the stack). */
+export async function scanAll(r: Pick<Redis, 'callBuffer'>, cmd: 'HSCAN' | 'SSCAN', key: string, wanted: number): Promise<Buffer[]> {
   const out: Buffer[] = [];
   let cursor = '0';
   do {
     const [next, batch] = (await r.callBuffer(cmd, key, cursor, 'COUNT', SCAN_BATCH)) as [Buffer, Buffer[]];
-    out.push(...batch);
+    for (const item of batch) {
+      out.push(item);
+      if (out.length >= wanted) return out;
+    }
     cursor = next.toString();
-  } while (cursor !== '0' && out.length < wanted);
-  return out.slice(0, wanted);
+  } while (cursor !== '0');
+  return out;
 }

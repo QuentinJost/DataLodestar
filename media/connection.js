@@ -27,6 +27,12 @@
       $(id).required = !byUri && (id !== 'user' || $('user').required);
       $(id).disabled = byUri;
     });
+    const ssl = $('ssl').checked && !byUri;
+    $('sslRow').classList.toggle('hidden', byUri);
+    $('sslVerifyRow').classList.toggle('hidden', !ssl);
+    $('sslCaRow').classList.toggle('hidden', !ssl || !$('sslVerify').checked);
+    $('sslNameRow').classList.toggle('hidden', !ssl || !$('sslVerify').checked);
+    $('sslServerName').placeholder = ssh ? 'name in the certificate, if not the host above (often 127.0.0.1 via SSH)' : 'optional; default: the host above';
     $('kindHint').textContent = HINTS[kind];
     $('sshFields').classList.toggle('hidden', !ssh);
     const auth = $('sshAuth').value;
@@ -50,6 +56,10 @@
     $('uri').value = c.uri || '';
     $('authSource').value = c.authSource || '';
     $('ssl').checked = !!c.ssl;
+    // Only connections saved before verification existed lack the field; new ones verify.
+    $('sslVerify').checked = c.sslVerify !== false;
+    $('sslCa').value = c.sslCaPath || '';
+    $('sslServerName').value = c.sslServerName || '';
     $('txMode').value = c.txMode || 'auto';
     $('savePassword').checked = c.savePassword !== false;
     $('showSystem').checked = !!c.showSystemDatabases;
@@ -82,6 +92,9 @@
         uri: $('kind').value === 'mongodb' ? $('uri').value.trim() || undefined : undefined,
         authSource: $('kind').value === 'mongodb' ? $('authSource').value.trim() || undefined : undefined,
         ssl: $('ssl').checked,
+        sslVerify: $('sslVerify').checked,
+        sslCaPath: $('sslCa').value.trim() || undefined,
+        sslServerName: $('sslServerName').value.trim() || undefined,
         txMode: $('kind').value === 'redis' ? 'auto' : $('txMode').value,
         savePassword: $('savePassword').checked,
         showSystemDatabases: $('showSystem').checked,
@@ -110,8 +123,13 @@
     syncVisibility();
   });
   $('uri').addEventListener('input', syncVisibility);
-  ['sshEnabled', 'sshAuth', 'savePassword'].forEach((id) => $(id).addEventListener('change', syncVisibility));
+  // Turning TLS on proposes verification, whatever was stored while TLS was off.
+  $('ssl').addEventListener('change', () => {
+    if ($('ssl').checked) $('sslVerify').checked = true;
+  });
+  ['sshEnabled', 'sshAuth', 'savePassword', 'ssl', 'sslVerify'].forEach((id) => $(id).addEventListener('change', syncVisibility));
   $('browseKey').addEventListener('click', () => vscode.postMessage({ type: 'browseKey' }));
+  $('browseCa').addEventListener('click', () => vscode.postMessage({ type: 'browseCa' }));
   $('test').addEventListener('click', () => {
     if (!form.reportValidity()) return;
     result('Testing…', true);
@@ -131,6 +149,8 @@
       fill(msg.config || {});
     } else if (msg.type === 'keyPath') {
       $('sshKey').value = msg.path;
+    } else if (msg.type === 'caPath') {
+      $('sslCa').value = msg.path;
     } else if (msg.type === 'testResult') {
       result(msg.message, msg.ok);
     } else if (msg.type === 'uri') {

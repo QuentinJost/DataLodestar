@@ -30,6 +30,11 @@ export interface ConnectionConfig {
   /** MongoDB authentication database (default "admin"). */
   authSource?: string;
   ssl: boolean;
+  /** Check the server certificate; saved before 0.5.0 without it = not checked. */
+  sslVerify?: boolean;
+  sslCaPath?: string;
+  /** Name expected in the certificate when it differs from `host` (SSH tunnel, IP, alias). */
+  sslServerName?: string;
   txMode: TxMode;
   savePassword: boolean;
   showSystemDatabases: boolean;
@@ -105,6 +110,8 @@ export interface QueryResult {
   /** MongoDB documents as relaxed Extended JSON, for the JSON view. */
   documents?: unknown[];
   truncated?: boolean;
+  /** The server stopped the statement at the row limit: it did not run to the end. */
+  stopped?: boolean;
 }
 
 /** Engine-neutral structure page: tables of facts plus an optional code block. */

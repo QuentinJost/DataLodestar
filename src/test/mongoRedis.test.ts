@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { ObjectId } from 'mongodb';
-import { createShellContext, evaluate, evaluateObject, isDestructiveOp, MongoOp, splitScript } from '../mongoShell';
+import { createShellContext, evaluate, isDestructiveOp, MongoOp, splitScript } from '../mongoShell';
 import { commandAt, isDestructiveCommand, splitCommands, tokenize } from '../redisCommand';
 
 test('mongo: splits top-level statements, semicolons optional', () => {
@@ -48,11 +48,15 @@ test('mongo: BSON helpers produce driver types', () => {
   assert.equal(filter.at.$gte.toISOString(), '2026-01-01T00:00:00.000Z');
 });
 
-test('mongo: viewer filters are object literals', () => {
-  assert.deepEqual(evaluateObject(''), {});
-  assert.deepEqual(evaluateObject("{ status: 'active', n: { $in: [1, 2] } }"), { status: 'active', n: { $in: [1, 2] } });
-  assert.throws(() => evaluateObject('[1, 2]'), /Expected an object/);
-  assert.throws(() => evaluateObject('while (true) {}'));
+test('mongo: editor scripts use the context\'s own Date, Math and JSON, converted for the driver', () => {
+  const ctx = createShellContext();
+  const op = evaluate("db.a.find({ at: { $lt: new Date(Date.UTC(2026, 0, 1)) }, n: Math.max(1, 2), j: JSON.parse('{\"x\":1}') })", ctx) as MongoOp;
+  const f = op.args[0] as { at: { $lt: Date }; n: number; j: { x: number } };
+  assert.ok(f.at.$lt instanceof Date, 'host-realm Date for the BSON serializer');
+  assert.equal(f.at.$lt.toISOString(), '2026-01-01T00:00:00.000Z');
+  assert.equal(f.n, 2);
+  assert.deepEqual(f.j, { x: 1 });
+  assert.notEqual(evaluate('Date', ctx), Date, 'not the extension host Date');
 });
 
 test('mongo: destructive operations', () => {
@@ -97,4 +101,38 @@ import { tokenizeBuffers } from '../redisCommand';
 test('redis: \\xHH is a raw byte, typed text is UTF-8', () => {
   const [, , v] = tokenizeBuffers('SET k "\\x80\\xffé"');
   assert.deepEqual([...v], [0x80, 0xff, 0xc3, 0xa9]);
+});
+
+test('redis scanAll: a 200,000-item batch does not overflow and stops at the wanted count', async () => {
+  const { scanAll } = await import('../drivers/redis');
+  const big = Array.from({ length: 200_000 }, (_, i) => Buffer.from(`m${i}`));
+  let calls = 0;
+  const client = {
+    callBuffer: async () => {
+      calls++;
+      return [Buffer.from(calls === 1 ? '42' : '0'), big];
+    },
+  };
+  const out = await scanAll(client as never, 'SSCAN', 'k', 1000);
+  assert.equal(out.length, 1000);
+  assert.equal(calls, 1, 'no round trip once enough items are in');
+  const all = await scanAll({ callBuffer: async () => [Buffer.from('0'), big] } as never, 'SSCAN', 'k', 500_000);
+  assert.equal(all.length, 200_000);
+});
+
+test('mongo: grid cells rebuilt from Extended JSON match the driver cells, big integers exact', async () => {
+  const { Binary, Decimal128, Long, MinKey, Timestamp, UUID } = await import('mongodb');
+  const { bsonToCell, documentsToResult, toExtendedJson } = await import('../drivers/mongo');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { cell } = require('../../media/mongoRows.js');
+  const values: unknown[] = [
+    null, 'x', true, 1.5, 42, NaN, Infinity, new ObjectId('64b7f0c2a1b2c3d4e5f60718'), new Date('2026-01-02T03:04:05Z'),
+    new Date(-1e14), new Date(NaN), Long.fromNumber(42), Long.fromString('9007199254740993'), Decimal128.fromString('1.10'),
+    new Binary(Buffer.from([0, 128, 255]), 0), new Binary(Buffer.alloc(5000, 7), 0), new UUID('9c3b6d8e-4f2a-11ee-8f1a-0242ac120002'),
+    new Timestamp({ t: 1, i: 2 }), new MinKey(), /ab/i, [1, { x: 2 }], { a: 1, at: new Date('2026-01-02T00:00:00Z') }, { long: 'y'.repeat(3000) },
+  ];
+  for (const v of values) assert.deepEqual(cell(toExtendedJson(v)), bsonToCell(v), String(v));
+  const r = documentsToResult([{ _id: 1, n: Long.fromString('9007199254740993'), nested: { big: Long.fromString('9007199254740993') } }], 10);
+  assert.deepEqual(r.rows[0], [1, '9007199254740993', '{"big":{"$numberLong":"9007199254740993"}}']);
+  assert.deepEqual((r.documents![0] as { n: unknown }).n, { $numberLong: '9007199254740993' }, 'JSON view keeps the exact value');
 });

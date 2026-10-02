@@ -12,16 +12,7 @@ import { mongoSource, sqlSource, TablePanel } from './views/tablePanel';
 
 export function activate(ctx: vscode.ExtensionContext): void {
   const store = new ConnectionStore(ctx);
-  void store.migrateUriPasswords().then(({ moved, dropped }) => {
-    if (moved.length) {
-      void vscode.window.showInformationMessage(`DataLodestar: the password of ${moved.join(', ')} was moved from the connection string to the OS keychain.`);
-    }
-    if (dropped.length) {
-      void vscode.window.showWarningMessage(
-        `DataLodestar: the password was removed from the connection string of ${dropped.join(', ')} (passwords are not saved for it); it will be asked at the next connection.`,
-      );
-    }
-  });
+  void migrate(store);
   const sessions = new SessionManager(store);
   const results = new ResultsPanel(ctx.extensionUri);
   const runner = new QueryRunner(ctx, store, sessions, results);
@@ -31,7 +22,8 @@ export function activate(ctx: vscode.ExtensionContext): void {
   const openSql = (connId: string, database: string | undefined, text: string, language?: string) => runner.openSql(connId, database, text, language);
 
   /** Connection targeted by a command: tree node, else active editor binding, else a quick pick. */
-  async function targetConnection(node?: NavNode, onlyConnected = false): Promise<string | undefined> {
+  async function targetConnection(node?: NavNode | string, onlyConnected = false): Promise<string | undefined> {
+    if (typeof node === 'string') return store.get(node) ? node : undefined;
     if (node instanceof ConnectionNode) return node.config.id;
     if (node && 'connId' in node) return node.connId;
     const editor = vscode.window.activeTextEditor;
@@ -64,6 +56,28 @@ export function activate(ctx: vscode.ExtensionContext): void {
     const id = await targetConnection(node);
     const config = id && store.get(id);
     if (config) ConnectionForm.show(ctx.extensionUri, store, sessions, config);
+  });
+
+  register('dataLodestar.resetHostKey', async (node?: NavNode) => {
+    const id = await targetConnection(node);
+    const config = id && store.get(id);
+    if (!config) return;
+    const ssh = config.ssh;
+    if (!ssh?.hostFingerprint) {
+      void vscode.window.showInformationMessage(`DataLodestar: "${config.name}" has no pinned SSH host key.`);
+      return;
+    }
+    const host = `${ssh.host}:${ssh.port}`;
+    const forget = `Forget the key of ${host}`;
+    const ok = await vscode.window.showWarningMessage(
+      `Forget the pinned SSH host key of ${host} (${ssh.hostFingerprint})?\n` +
+        'Only do this if the server key really changed. The next connection shows the new fingerprint and asks you to trust it: compare it with the one given by the server administrator.',
+      { modal: true },
+      forget,
+    );
+    if (ok !== forget) return;
+    await store.save({ ...config, ssh: { ...ssh, hostFingerprint: undefined } });
+    void vscode.window.showInformationMessage(`DataLodestar: pinned host key of ${host} forgotten.`);
   });
 
   register('dataLodestar.deleteConnection', async (node?: NavNode) => {
@@ -196,4 +210,24 @@ export function activate(ctx: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   // Sessions are closed by SessionManager.dispose (registered in subscriptions).
+}
+
+/** One-time rewrites of saved connections, in sequence: each one reads and rewrites the whole list. */
+async function migrate(store: ConnectionStore): Promise<void> {
+  const { moved, dropped } = await store.migrateUriPasswords();
+  if (moved.length) {
+    void vscode.window.showInformationMessage(`DataLodestar: the password of ${moved.join(', ')} was moved from the connection string to the OS keychain.`);
+  }
+  if (dropped.length) {
+    void vscode.window.showWarningMessage(
+      `DataLodestar: the password was removed from the connection string of ${dropped.join(', ')} (passwords are not saved for it); it will be asked at the next connection.`,
+    );
+  }
+  const unchecked = await store.migrateTlsVerify();
+  if (unchecked.length) {
+    void vscode.window.showWarningMessage(
+      `DataLodestar: ${unchecked.join(', ')} use${unchecked.length === 1 ? 's' : ''} SSL/TLS without checking the server certificate. ` +
+        'Edit the connection and check "Verify the server certificate" (with a CA file for a self-signed server).',
+    );
+  }
 }

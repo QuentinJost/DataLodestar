@@ -13,6 +13,7 @@ export type OpenSql = (connId: string, database: string, text: string, language?
 
 export interface DataPage {
   columns: string[];
+  /** Empty when `documents` is set: the webview derives the rows from them. */
   rows: CellValue[][];
   documents?: unknown[];
   hasMore: boolean;
@@ -78,6 +79,8 @@ export class TablePanel {
   static show(extensionUri: vscode.Uri, openSql: OpenSql, connId: string, source: DataSource, tab: Tab): void {
     const existing = TablePanel.open.get(source.key);
     if (existing) {
+      // A hidden panel reloads when revealed and may miss the message: 'ready' sends it again.
+      if (!existing.panel.visible) existing.requestedTab = tab;
       existing.panel.reveal();
       void existing.panel.webview.postMessage({ type: 'showTab', tab });
       return;
@@ -86,17 +89,20 @@ export class TablePanel {
   }
 
   private readonly panel: vscode.WebviewPanel;
+  /** Tab to open on the next 'ready': the initial one, then any asked while hidden. */
+  private requestedTab?: Tab;
 
   private constructor(
     extensionUri: vscode.Uri,
     private readonly openSql: OpenSql,
     private readonly connId: string,
     private readonly source: DataSource,
-    private readonly initialTab: Tab,
+    initialTab: Tab,
   ) {
+    this.requestedTab = initialTab;
+    // Not retained when hidden: the page reloads from its saved state (filters, sort, page).
     this.panel = vscode.window.createWebviewPanel('dataLodestar.table', source.title, vscode.ViewColumn.Active, {
       enableScripts: true,
-      retainContextWhenHidden: true,
       localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')],
     });
     this.panel.iconPath = new vscode.ThemeIcon(source.icon);
@@ -115,12 +121,14 @@ export class TablePanel {
       case 'ready':
         this.post({
           type: 'init',
-          tab: this.initialTab,
+          tab: this.requestedTab,
           pageSize: settings.get<number>('pageSize', 100),
           binaryDisplay: settings.get<string>('binaryDisplay', 'auto'),
+          maxCellChars: settings.get<number>('maxCellChars', 500),
           labels: this.source.labels,
           sortStyle: this.source.sortStyle,
         });
+        this.requestedTab = undefined;
         break;
       case 'load': {
         const limit = Math.max(1, Math.min(10000, Math.floor(Number(msg.limit)) || 100));
@@ -180,7 +188,7 @@ export function sqlSource(sessions: SessionManager, connId: string, connName: st
       if (orderBy) sql += ` ORDER BY ${orderBy}`;
       assertSingleStatement(sql, d.kind);
       // One extra row tells whether a next page exists without a COUNT(*).
-      const r = await d.execute(`${sql} LIMIT ${limit + 1} OFFSET ${offset}`, table.database);
+      const r = await d.execute(`${sql} LIMIT ${limit + 1} OFFSET ${offset}`, table.database, limit + 1);
       sessions.emit(connId);
       return {
         columns: r.columns,
@@ -225,9 +233,10 @@ export function mongoSource(sessions: SessionManager, connId: string, coll: Coll
       const r = await d.find(coll.database, coll.name, filter, sort, limit + 1, offset);
       sessions.emit(connId);
       const hasMore = r.rows.length > limit;
+      // Documents only: the webview builds the grid cells from them (media/mongoRows.js).
       return {
         columns: r.columns,
-        rows: r.rows.slice(0, limit),
+        rows: [],
         documents: r.documents?.slice(0, limit),
         hasMore,
         durationMs: r.durationMs,

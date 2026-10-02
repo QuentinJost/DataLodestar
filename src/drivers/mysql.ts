@@ -1,10 +1,20 @@
 import * as mysql from 'mysql2/promise';
-import { ColumnInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
-import { Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, Mutex, normalizeValue } from './driver';
+import { checkServerIdentity, TLSSocket } from 'tls';
+import { CellValue, ColumnInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
+import { mysqlTlsOptions } from './tls';
+import { Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, leadingKeyword, Mutex, normalizeValue } from './driver';
 
 const SYSTEM_DATABASES = new Set(['information_schema', 'performance_schema', 'mysql', 'sys']);
 
 type Row = Record<string, unknown>;
+
+/** The callback connection behind mysql2/promise, whose queries emit rows one by one. */
+interface CoreConnection {
+  query(options: { sql: string; rowsAsArray: boolean }): NodeJS.EventEmitter;
+}
+
+/** "Query execution was interrupted": the answer to our own KILL QUERY. */
+const ER_QUERY_INTERRUPTED = 1317;
 
 export class MysqlDriver implements SqlDriver {
   readonly kind = 'mysql' as const;
@@ -28,20 +38,32 @@ export class MysqlDriver implements SqlDriver {
     this.session.on('error', (err) => this.onLost?.(err));
   }
 
-  private open(): Promise<mysql.Connection> {
+  private async open(): Promise<mysql.Connection> {
     const e = this.endpoint;
-    return mysql.createConnection({
+    const { ssl, nameAfterConnect } = mysqlTlsOptions(e);
+    const stream = e.stream ? await e.stream() : undefined;
+    const conn = await mysql.createConnection({
+      stream,
       host: e.host,
       port: e.port,
       user: e.user,
       password: e.password,
       database: e.database || undefined,
-      ssl: e.ssl ? { rejectUnauthorized: false } : undefined,
+      ssl: ssl as mysql.SslOptions | undefined,
       dateStrings: true,
       supportBigNumbers: true,
       bigNumberStrings: false,
       connectTimeout: 15000,
     });
+    if (nameAfterConnect) {
+      const socket = (conn as unknown as { connection: { stream: TLSSocket } }).connection.stream;
+      const mismatch = checkServerIdentity(nameAfterConnect, socket.getPeerCertificate());
+      if (mismatch) {
+        conn.destroy();
+        throw mismatch;
+      }
+    }
+    return conn;
   }
 
   async close(): Promise<void> {
@@ -126,7 +148,7 @@ export class MysqlDriver implements SqlDriver {
     return { columns, indexes: [...indexes.values()], foreignKeys: [...foreignKeys.values()], ddl };
   }
 
-  execute(sql: string, database: string | undefined): Promise<QueryResult> {
+  execute(sql: string, database: string | undefined, maxRows = Infinity): Promise<QueryResult> {
     return this.lock.run(async () => {
       const conn = this.session!;
       if (database && database !== this.currentDb) {
@@ -134,24 +156,74 @@ export class MysqlDriver implements SqlDriver {
         this.currentDb = database;
       }
       const started = Date.now();
-      const [result, fields] = await conn.query({ sql, rowsAsArray: true });
-      const durationMs = Date.now() - started;
+      const result = leadingKeyword(sql) === 'call' ? await this.buffered(conn, sql) : await this.streamed(conn, sql, maxRows);
+      result.durationMs = Date.now() - started;
 
       const use = /^\s*use\s+`?((?:[^`]|``)+?)`?\s*$/i.exec(sql);
       if (use) this.currentDb = use[1].replace(/``/g, '`');
       this.trackTransaction(sql);
+      return result;
+    });
+  }
 
-      // CALL returns [resultSet..., header]; show the first result set.
-      if (Array.isArray(result) && Array.isArray(fields) && Array.isArray(fields[0])) {
-        const f = fields[0] as mysql.FieldPacket[];
-        return { columns: f.map((x) => x.name), rows: (result[0] as unknown[][]).map((r) => r.map(normalizeValue)), durationMs };
-      }
-      if (Array.isArray(result) && fields) {
-        const f = fields as mysql.FieldPacket[];
-        return { columns: f.map((x) => x.name), rows: (result as unknown[][]).map((r) => r.map(normalizeValue)), durationMs };
-      }
-      const header = result as mysql.ResultSetHeader;
-      return { columns: [], rows: [], affectedRows: header.affectedRows, durationMs };
+  /** CALL may return several result sets; it is buffered and shows the first one. */
+  private async buffered(conn: mysql.Connection, sql: string): Promise<QueryResult> {
+    const [result, fields] = await conn.query({ sql, rowsAsArray: true });
+    // CALL returns [resultSet..., header].
+    if (Array.isArray(result) && Array.isArray(fields) && Array.isArray(fields[0])) {
+      const f = fields[0] as mysql.FieldPacket[];
+      return { columns: f.map((x) => x.name), rows: (result[0] as unknown[][]).map((r) => r.map(normalizeValue)), durationMs: 0 };
+    }
+    if (Array.isArray(result) && fields) {
+      const f = fields as mysql.FieldPacket[];
+      return { columns: f.map((x) => x.name), rows: (result as unknown[][]).map((r) => r.map(normalizeValue)), durationMs: 0 };
+    }
+    return { columns: [], rows: [], affectedRows: (result as mysql.ResultSetHeader).affectedRows, durationMs: 0 };
+  }
+
+  /**
+   * Keeps at most `maxRows` rows: past that, a read-only statement is killed on the
+   * server (nothing to undo) and any other one has its remaining rows dropped as
+   * they arrive, so memory stays bounded either way.
+   */
+  private streamed(conn: mysql.Connection, sql: string, maxRows: number): Promise<QueryResult> {
+    const core = (conn as unknown as { connection: CoreConnection }).connection;
+    return new Promise<QueryResult>((resolve, reject) => {
+      let columns: string[] | undefined;
+      const rows: CellValue[][] = [];
+      let affectedRows: number | undefined;
+      let truncated = false;
+      let killing: Promise<unknown> | undefined;
+      const query = core.query({ sql, rowsAsArray: true });
+      // Statements without a result set emit 'fields' with nothing, then their header as a 'result'.
+      query.on('fields', (fields?: mysql.FieldPacket[]) => {
+        if (fields) columns = fields.map((f) => f.name);
+      });
+      query.on('result', (row: unknown) => {
+        if (!Array.isArray(row)) {
+          affectedRows = (row as mysql.ResultSetHeader).affectedRows;
+          return;
+        }
+        if (truncated) return;
+        if (rows.length < maxRows) {
+          rows.push(row.map(normalizeValue));
+          return;
+        }
+        truncated = true;
+        if (isReadOnly(sql) && this.meta) killing = this.meta.query('KILL QUERY ?', [conn.threadId]).catch(() => undefined);
+      });
+      let settled = false;
+      const done = (err?: mysql.QueryError) => {
+        if (settled) return;
+        settled = true;
+        // Wait for the KILL so it cannot land on the next statement of the session.
+        void Promise.resolve(killing).then(() => {
+          if (err && !(truncated && err.errno === ER_QUERY_INTERRUPTED)) reject(err);
+          else resolve(columns ? { columns, rows, truncated, ...(err ? { stopped: true } : {}), durationMs: 0 } : { columns: [], rows: [], affectedRows, durationMs: 0 });
+        });
+      };
+      query.on('error', (err: mysql.QueryError) => done(err));
+      query.on('end', () => done());
     });
   }
 

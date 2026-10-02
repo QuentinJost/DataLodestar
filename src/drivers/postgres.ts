@@ -1,10 +1,76 @@
 import { Client } from 'pg';
-import { ColumnInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
-import { Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, Mutex, normalizeValue } from './driver';
+import Cursor from 'pg-cursor';
+import { CellValue, ColumnInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
+import { tlsOptions } from './tls';
+import { Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, leadingKeyword, Mutex, normalizeValue } from './driver';
 
 const FK_ACTIONS: Record<string, string> = { a: 'NO ACTION', r: 'RESTRICT', c: 'CASCADE', n: 'SET NULL', d: 'SET DEFAULT' };
 
 type Row = Record<string, unknown>;
+
+/** A per-database session left idle this long is closed, unless it holds state. */
+export const SESSION_IDLE_MS = 10 * 60 * 1000;
+
+/** Leaves something behind in the session (settings, temp objects, locks): never closed when idle. */
+export const holdsSessionState = (sql: string) =>
+  ['set', 'prepare', 'listen', 'declare', 'load'].includes(leadingKeyword(sql)) ||
+  (leadingKeyword(sql) === 'create' && /^\s*create\s+(global\s+|local\s+)?temp(orary)?\b/i.test(sql)) ||
+  /\binto\s+((global|local)\s+)?temp(orary)?\b|\bpg_temp\./i.test(sql) ||
+  /\b(pg_(try_)?advisory_(xact_)?lock(_shared)?|set_config)\s*\(/i.test(sql);
+
+/** Statements read through a cursor (see readCursor); the rest are buffered. */
+const ROW_STATEMENTS = new Set(['select', 'with', 'values', 'table', 'show', 'explain']);
+
+/** Closing its cursor stops a read, except EXPLAIN (ANALYZE), which ran whole before its plan. */
+const stopsWithCursor = (sql: string) => leadingKeyword(sql) !== 'explain';
+
+interface CursorResult {
+  fields: { name: string }[];
+  rowCount: number | null;
+}
+
+/**
+ * A read fetches one batch of `maxRows + 1` rows (the extra one tells truncation) and closes the
+ * portal. Any other statement (a SELECT … FOR UPDATE locks every row it reads) is read to the end,
+ * keeping `maxRows` rows, as on MySQL.
+ */
+function readCursor(client: Client, sql: string, maxRows: number): Promise<QueryResult> {
+  const cursor = client.query(new Cursor(sql, undefined, { rowMode: 'array' }));
+  const batch = Number.isFinite(maxRows) && isReadOnly(sql) ? maxRows + 1 : 0;
+  return new Promise<QueryResult>((resolve, reject) => {
+    const rows: CellValue[][] = [];
+    let seen = 0;
+    const step = () =>
+      cursor.read(batch || 10000, (err: Error | undefined, got: unknown[][], result: CursorResult) => {
+        if (err) return reject(err);
+        seen += got.length;
+        for (const row of got) if (rows.length < maxRows) rows.push(row.map(normalizeValue));
+        const more = got.length === (batch || 10000);
+        if (more && !batch) return step();
+        const done = () => {
+          const fields = result.fields ?? [];
+          resolve(
+            fields.length
+              ? { columns: fields.map((f) => f.name), rows, truncated: seen > maxRows, ...(more && stopsWithCursor(sql) ? { stopped: true } : {}), durationMs: 0 }
+              : { columns: [], rows: [], affectedRows: result.rowCount ?? undefined, durationMs: 0 },
+          );
+        };
+        if (more) cursor.close((closeErr?: Error) => (closeErr ? reject(closeErr) : done()));
+        else done();
+      });
+    step();
+  });
+}
+
+async function buffered(client: Client, sql: string): Promise<QueryResult> {
+  const res = await client.query({ text: sql, rowMode: 'array' });
+  // Only `sql` with several statements returns an array; keep the last result.
+  const r = Array.isArray(res) ? res[res.length - 1] : res;
+  if (r.fields && r.fields.length > 0) {
+    return { columns: r.fields.map((f: { name: string }) => f.name), rows: (r.rows as unknown[][]).map((row) => row.map(normalizeValue)), durationMs: 0 };
+  }
+  return { columns: [], rows: [], affectedRows: r.rowCount ?? undefined, durationMs: 0 };
+}
 
 /**
  * PostgreSQL has no cross-database queries, so each database gets its own pair of
@@ -25,6 +91,11 @@ export class PostgresDriver implements SqlDriver {
   private readonly dirtyTx = new Set<string>();
   private readonly defaultDb: string;
   private running?: Client;
+  /** Last statement time per database session, for the idle sweep. */
+  private readonly lastUsed = new Map<string, number>();
+  /** Databases whose session holds state (see holdsSessionState): kept open. */
+  private readonly stateful = new Set<string>();
+  private sweeper?: NodeJS.Timeout;
   private mode: TxMode = 'auto';
   private readonly lock = new Mutex();
 
@@ -38,6 +109,23 @@ export class PostgresDriver implements SqlDriver {
 
   async connect(): Promise<void> {
     await this.client(this.defaultDb, 'meta');
+    this.sweeper = setInterval(() => void this.closeIdleSessions(), 60_000);
+    this.sweeper.unref();
+  }
+
+  /** Closes sessions idle for SESSION_IDLE_MS with no transaction and no state; reopened on the next statement. */
+  closeIdleSessions(now = Date.now()): Promise<string[]> {
+    return this.lock.run(async () => {
+      const closed: string[] = [];
+      for (const [db, client] of [...this.sessions]) {
+        if (this.openTx.has(db) || this.stateful.has(db) || now - (this.lastUsed.get(db) ?? now) < SESSION_IDLE_MS) continue;
+        this.sessions.delete(db);
+        this.lastUsed.delete(db);
+        closed.push(db);
+        await client.end().catch(() => undefined);
+      }
+      return closed;
+    });
   }
 
   private async client(database: string, role: 'session' | 'meta'): Promise<Client> {
@@ -45,22 +133,28 @@ export class PostgresDriver implements SqlDriver {
     const existing = pool.get(database);
     if (existing) return existing;
     const e = this.endpoint;
+    const stream = e.stream ? await e.stream() : undefined;
     const client = new Client({
+      stream: stream && (() => stream),
       host: e.host,
       port: e.port,
       user: e.user,
       password: e.password,
       database,
-      ssl: e.ssl ? { rejectUnauthorized: false } : undefined,
+      ssl: tlsOptions(e),
       connectionTimeoutMillis: 15000,
       application_name: 'DataLodestar',
     });
     await client.connect();
     client.on('error', (err) => {
+      // A client closed on purpose (idle sweep) is no longer in the pool: nothing was lost.
+      if (pool.get(database) !== client) return;
       pool.delete(database);
       if (role === 'session') {
         this.openTx.delete(database);
         this.dirtyTx.delete(database);
+        this.stateful.delete(database);
+        this.lastUsed.delete(database);
         this.onLost?.(err);
       }
     });
@@ -69,6 +163,9 @@ export class PostgresDriver implements SqlDriver {
   }
 
   async close(): Promise<void> {
+    clearInterval(this.sweeper);
+    this.lastUsed.clear();
+    this.stateful.clear();
     const all = [...this.sessions.values(), ...this.metas.values()];
     this.sessions.clear();
     this.metas.clear();
@@ -192,10 +289,12 @@ export class PostgresDriver implements SqlDriver {
     return { columns, indexes, foreignKeys, ddl };
   }
 
-  execute(sql: string, database: string | undefined): Promise<QueryResult> {
+  execute(sql: string, database: string | undefined, maxRows = Infinity): Promise<QueryResult> {
     const db = database || this.defaultDb;
     return this.lock.run(async () => {
       const client = await this.client(db, 'session');
+      this.lastUsed.set(db, Date.now());
+      if (holdsSessionState(sql)) this.stateful.add(db);
       if (this.mode === 'manual' && !this.openTx.has(db) && !isTxBegin(sql) && !isTxControl(sql)) {
         await client.query('BEGIN');
         this.openTx.add(db);
@@ -203,15 +302,10 @@ export class PostgresDriver implements SqlDriver {
       const started = Date.now();
       this.running = client;
       try {
-        const res = await client.query({ text: sql, rowMode: 'array' });
-        const durationMs = Date.now() - started;
+        const result = ROW_STATEMENTS.has(leadingKeyword(sql)) ? await readCursor(client, sql, maxRows) : await buffered(client, sql);
+        result.durationMs = Date.now() - started;
         this.track(db, sql);
-        // Only `sql` with several statements returns an array; keep the last result.
-        const r = Array.isArray(res) ? res[res.length - 1] : res;
-        if (r.fields && r.fields.length > 0) {
-          return { columns: r.fields.map((f: { name: string }) => f.name), rows: (r.rows as unknown[][]).map((row) => row.map(normalizeValue)), durationMs };
-        }
-        return { columns: [], rows: [], affectedRows: r.rowCount ?? undefined, durationMs };
+        return result;
       } catch (err) {
         // A failed COMMIT/ROLLBACK still ends the transaction; a failed write aborts it
         // and PostgreSQL then needs a ROLLBACK, so it counts as pending.

@@ -47,7 +47,7 @@ the progress notification (`KILL QUERY` / `pg_cancel_backend`).
 - The tree lists databases, then **Collections** and **Views**; expanding a collection shows its
   fields, inferred from a random sample of 200 documents (types and share of documents holding them).
 - Clicking a collection opens the viewer with **FILTER** and **SORT** instead of WHERE and ORDER BY.
-  Both take shell syntax: `{ status: 'active', createdAt: { $gte: ISODate('2026-01-01') } }`,
+  Both take shell object syntax: `{ status: 'active', createdAt: { $gte: ISODate('2026-01-01') } }`,
   `{ createdAt: -1 }`, `{ _id: ObjectId('…') }`. Clicking a header sorts on that field. **JSON**
   switches the grid to the documents as Extended JSON. The Structure tab shows the sampled fields,
   the indexes and the collection options (validator…).
@@ -81,7 +81,8 @@ the progress notification (`KILL QUERY` / `pg_cancel_backend`).
 
 - The tree lists the databases holding keys (`db0 · 1,204 keys`); empty ones are grouped apart.
 - Clicking a database opens the key browser: **MATCH** pattern (`user:*`) and **TYPE** filter, keys
-  loaded 500 at a time with SCAN (never `KEYS`), then the selected key's type, size, TTL and value:
+  loaded 500 at a time with SCAN (never `KEYS`), up to 10,000 (then narrow the pattern), then the
+  selected key's type, size, TTL and value:
   text (JSON is pretty-printed), or a grid for hashes, lists, sets, sorted sets (with scores) and
   streams. Binary values follow the binary display formats below.
 - **New Query** opens a command editor: one command per line, redis-cli quoting (`"a b"`, `'it\'s'`,
@@ -143,8 +144,10 @@ your own uncommitted rows), plus a separate auto-commit session for the tree and
 ## SSH tunnels
 
 Set **Host / port** as seen *from the SSH server* (often `127.0.0.1:3306`). The first connection
-shows the server's key fingerprint (`SHA256:…`) for you to trust; it is then pinned, and a changed
-key raises a blocking warning. Private keys default to `~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa`.
+shows the server's key fingerprint (`SHA256:…`) for you to trust; it is then pinned. A changed
+key refuses the connection, with no button to accept it: if the server key really changed, check
+the new fingerprint with its administrator, run **Reset Pinned SSH Host Key** (from that message or
+on the connection; it asks you to confirm, naming the host), then connect and trust the new key. Private keys default to `~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa`.
 The **SSH agent** option uses `SSH_AUTH_SOCK`.
 
 ## Security notes
@@ -158,32 +161,73 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
 - A password typed inside a MongoDB connection string is moved to the keychain when saving, and the
   string is stored without it. Saving is refused if passwords are not saved for that connection.
   Connections saved by an earlier version are cleaned the same way at startup.
-- MongoDB scripts and the viewer's FILTER / SORT are evaluated in-process with Node's `vm`, like
-  mongosh runs your code: it is not a sandbox. Run only scripts you trust.
-- **Copy as CSV** copies values as they are: a cell starting with `=` can act as a formula once
-  pasted into a spreadsheet.
+- The viewer's FILTER / SORT are parsed, never run: only object literals, arrays, strings,
+  numbers, booleans, `null`, regular expressions and the helpers listed above are accepted (no
+  variables, calls to anything else, member access or template literals), so a pasted filter cannot
+  run code.
+- MongoDB scripts in the query editor are evaluated in-process with Node's `vm`, like mongosh runs
+  your code. It is not a sandbox: a script runs with the extension's privileges (files, network,
+  processes). Run only scripts you trust.
+- **Copy as CSV** quotes a cell starting with `=`, `+`, `-`, `@`, tab or CR and prefixes it with
+  `'`, so a spreadsheet does not run it as a formula (plain numbers such as `-1` are kept as they
+  are). Set `dataLodestar.csvEscapeFormulas` to `false` for raw output. Double-clicking a cell
+  copies it raw.
 - A workspace's `.vscode/settings.json` cannot turn off `dataLodestar.confirmDestructive`, and the
   table viewer accepts a single condition in WHERE / ORDER BY (no `;` followed by another statement).
 - On Linux without a running keyring, VS Code falls back to a weak "basic" encryption and warns about
   it at startup: install a keyring or leave **Save passwords** unchecked.
-- **Use SSL/TLS** encrypts the connection but does not verify the server certificate.
+- **Use SSL/TLS** verifies the server certificate by default: its chain (against the system CAs, or
+  the **CA certificate** file for a private or self-signed CA) and its name (**Certificate name**,
+  default the host; set it when the host is an IP or an alias, as is common through an SSH tunnel
+  where the host is often `127.0.0.1` as seen from the SSH server). Unchecking **Verify the
+  server certificate** encrypts without checking, so an attacker on the path can read the password.
+  TLS connections saved before 0.5.0 keep working unchecked and are listed in a warning at startup. A
+  MongoDB connection string sets its own TLS options (`tls=true`, `tlsCAFile=…`). When the
+  certificate name is not the host (or the host is an IP), MySQL checks it right after the
+  handshake rather than during it.
+- Through an SSH tunnel, MySQL, PostgreSQL and Redis talk to the server over SSH channels: no port
+  is opened on this machine. MongoDB's driver can only dial an address, so it gets a Unix socket in
+  a directory only you can open (removed on disconnect); on Windows it is a `127.0.0.1` port, which
+  any local process can reach while the connection is open.
 
 ## Settings
 
 | Setting | Default | |
 |---|---|---|
 | `dataLodestar.maxRows` | 1000 | Rows displayed per query result |
+| `dataLodestar.csvEscapeFormulas` | true | Copy as CSV neutralises cells a spreadsheet would run as formulas |
 | `dataLodestar.pageSize` | 100 | Default page size of the data viewer |
+| `dataLodestar.maxCellChars` | 500 | Characters shown per grid cell (tooltip: 8× more) |
 | `dataLodestar.binaryDisplay` | auto | Default format of binary columns |
 | `dataLodestar.stopOnError` | true | Stop a script at the first failing statement |
 | `dataLodestar.confirmDestructive` | true | Confirm destructive statements in auto-commit |
 
 ## Limitations
 
-- A query result is fetched whole, then trimmed to `maxRows` for display: add a `LIMIT` to huge
-  `SELECT`s. The data viewer always pages with `LIMIT`/`OFFSET`.
+- A query result stops at `maxRows` rows: the rest is not held in memory. A read-only statement is
+  then stopped on the server (MySQL `KILL QUERY`, PostgreSQL closes its cursor); any other one,
+  such as `SELECT … FOR UPDATE`, runs to the end, its extra rows dropped as they arrive. A `SELECT`
+  (or `WITH`, `SHOW`…) counts as read-only when it names no `INSERT`, `UPDATE`, `DELETE`, `MERGE`,
+  `INTO` nor row lock (`FOR UPDATE`, `FOR SHARE`…), even in a string. A MySQL `CALL` and
+  PostgreSQL statements other than `SELECT`, `WITH`, `VALUES`, `TABLE`, `SHOW` and `EXPLAIN` (such
+  as `INSERT … RETURNING`) are read whole. The data viewer always pages with `LIMIT`/`OFFSET`.
+- A read stopped at `maxRows` says so in its result: a function it calls on each row (one that
+  writes, say) may then have run for only some of the rows on PostgreSQL, and is rolled back with
+  the statement on MySQL (InnoDB). Raise `maxRows`, or aggregate (`SELECT count(f(id)) FROM t`), to
+  run it whole. `EXPLAIN ANALYZE` always runs to the end.
 - Cells are read-only; edit data with `UPDATE` statements.
+- A result of more than 50 rows draws only the rows in view, one line each (a line break shows as
+  `↵`); hover a cell for its full value, double-click to copy it. Column widths are set from the
+  first screen and a sample of the rest, so a longer value further down is cut with `…`.
+- The tree keeps what it listed (databases, tables, collections, columns) until **Refresh**, a
+  disconnect, a `CREATE` / `DROP` / `ALTER` / `RENAME` (or a MongoDB DDL method) run from the
+  editor, or the commit or rollback of pending changes. Objects created another way, or Redis key
+  counts, show after a **Refresh**.
 - For a MySQL `CALL` returning several result sets, only the first is shown.
+- PostgreSQL opens one session per database; one left idle for 10 minutes, outside a transaction,
+  is closed and reopened on the next statement. A session that ran `SET`, `PREPARE`, `LISTEN`,
+  `DECLARE`, `LOAD`, `CREATE TEMP…`, `SELECT … INTO TEMP`, `set_config()` or took an advisory lock
+  stays open.
 - Redis Cluster and Sentinel are not supported (single server only). Values and query results are
   read-only in the viewers; change data with commands.
 - A MongoDB query can be cancelled only if the user may run `$currentOp` / `killOp`.
@@ -194,8 +238,9 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
 npm install
 npm test                         # compile + unit tests (integration tests are skipped)
 ./scripts/integration.sh         # throwaway MySQL 8.4, PostgreSQL 17, MongoDB 8 (replica set), Redis 7, sshd
+./scripts/webview.sh             # webview scripts in headless Chromium (Playwright image)
 ```
 
-`integration.sh` needs Docker; set `HOST_DIR` when the daemon sees this folder under another path
-(e.g. from inside a container), and `KEEP=1` to reuse the servers between runs.
+Both scripts need Docker; set `HOST_DIR` when the daemon sees this folder under another path
+(e.g. from inside a container), and `KEEP=1` to reuse the servers of `integration.sh` between runs.
 Press `F5` with the folder open in VS Code to start an Extension Development Host.

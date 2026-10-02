@@ -1,8 +1,13 @@
 import { Binary, BSON, ClientSession, Decimal128, Document, Long, MongoClient, MongoClientOptions, ObjectId, Sort } from 'mongodb';
-import { DDL_METHODS, evaluateObject, MongoOp, WRITE_METHODS } from '../mongoShell';
+import { parseFilter } from '../filterParser';
+import { DDL_METHODS, MongoOp, WRITE_METHODS } from '../mongoShell';
 import { splitUriPassword } from '../uriCredentials';
 import { CellValue, CollectionInfo, CollectionStructure, FieldInfo, QueryResult, TxMode } from '../types';
 import { BaseDriver, BINARY_LIMIT, Endpoint, Mutex } from './driver';
+import { mongoTlsOptions } from './tls';
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { rowsFromDocuments } = require('../../media/mongoRows.js') as { rowsFromDocuments: (columns: string[], documents: unknown[]) => CellValue[][] };
 
 const { EJSON } = BSON;
 
@@ -55,17 +60,15 @@ export class MongoDriver implements BaseDriver {
         options.auth = { username: parsed.user, password: e.password };
       }
     } else {
-      url = `mongodb://${e.host.includes(':') ? `[${e.host}]` : e.host}:${e.port}`;
+      // A path is the Unix socket of an SSH tunnel (see SshTunnel.listen).
+      url = e.host.startsWith('/') ? `mongodb://${encodeURIComponent(e.host)}` : `mongodb://${e.host.includes(':') ? `[${e.host}]` : e.host}:${e.port}`;
       // A single explicit host, possibly an SSH tunnel: never follow replica-set member names.
       options.directConnection = true;
       if (e.user) {
         options.auth = { username: e.user, password: e.password };
         options.authSource = e.authSource || 'admin';
       }
-      if (e.ssl) {
-        options.tls = true;
-        options.tlsAllowInvalidCertificates = true;
-      }
+      Object.assign(options, mongoTlsOptions(e));
     }
     this.client = new MongoClient(url, options);
     await this.client.connect();
@@ -122,10 +125,10 @@ export class MongoDriver implements BaseDriver {
     return { sampled: sample.length, fields, indexes, options };
   }
 
-  /** Collection viewer page. Filter and sort are shell object literals. */
+  /** Collection viewer page. Filter and sort are shell object literals, parsed, never run. */
   find(database: string, collection: string, filterText: string, sortText: string, limit: number, skip: number): Promise<QueryResult> {
-    const filter = evaluateObject(filterText);
-    const sort = evaluateObject(sortText);
+    const filter = parseFilter(filterText);
+    const sort = parseFilter(sortText);
     return this.inSession(false, async (session) => {
       const started = Date.now();
       const docs = await this.client!.db(database).collection(collection).find(filter, { sort: sort as Sort, skip, limit, session }).toArray();
@@ -134,7 +137,7 @@ export class MongoDriver implements BaseDriver {
   }
 
   count(database: string, collection: string, filterText: string): Promise<number> {
-    const filter = evaluateObject(filterText);
+    const filter = parseFilter(filterText);
     return this.inSession(false, (session) => this.client!.db(database).collection(collection).countDocuments(filter, { session }));
   }
 
@@ -410,9 +413,22 @@ export function documentsToResult(docs: Document[], maxRows: number): Omit<Query
   }
   const id = columns.indexOf('_id');
   if (id > 0) columns.unshift(...columns.splice(id, 1));
-  const rows = shown.map((doc) => columns.map((c) => bsonToCell(doc[c])));
-  const documents = shown.map((d) => EJSON.serialize(d, { relaxed: true }));
-  return { columns, rows, documents, truncated };
+  const documents = shown.map(toExtendedJson);
+  return { columns, rows: rowsFromDocuments(columns, documents), documents, truncated };
+}
+
+/**
+ * Relaxed Extended JSON, except integers past 2^53 (a Long the driver did not turn into
+ * a number, or a bigint), kept exact as { $numberLong } instead of rounded.
+ */
+export function toExtendedJson(v: unknown): unknown {
+  if (typeof v === 'bigint') return { $numberLong: v.toString() };
+  if (v instanceof Long) return Number.isSafeInteger(v.toNumber()) ? v.toNumber() : { $numberLong: v.toString() };
+  if (Array.isArray(v)) return v.map(toExtendedJson);
+  if (v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype) {
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, toExtendedJson(x)]));
+  }
+  return EJSON.serialize(v, { relaxed: true });
 }
 
 function valuesToResult(values: unknown[]): Omit<QueryResult, 'durationMs'> {

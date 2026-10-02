@@ -1,3 +1,4 @@
+import { Duplex } from 'stream';
 import { BinaryCell, CellValue, DbKind, Family, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
 
 export interface Endpoint {
@@ -7,8 +8,19 @@ export interface Endpoint {
   password?: string;
   database?: string;
   ssl: boolean;
+  /** Check the server certificate (chain and name) when `ssl` is on. */
+  sslVerify?: boolean;
+  /** PEM file of the CA that signed the server certificate, when not a public one. */
+  sslCaPath?: string;
+  /** Name the certificate must carry; default `host`. */
+  sslServerName?: string;
   uri?: string;
   authSource?: string;
+  /**
+   * Opens a stream to the server (an SSH channel) instead of dialling host:port; host
+   * stays the server's name for TLS. Set for MySQL, PostgreSQL and Redis through SSH.
+   */
+  stream?: () => Promise<Duplex>;
 }
 
 /**
@@ -40,8 +52,11 @@ export interface SqlDriver extends BaseDriver {
   readonly family: 'sql';
   listTables(database: string): Promise<TableInfo[]>;
   describeTable(ref: TableRef): Promise<TableStructure>;
-  /** Runs a single statement in the session, against `database` when given. */
-  execute(sql: string, database: string | undefined): Promise<QueryResult>;
+  /**
+   * Runs a single statement in the session, against `database` when given. At most
+   * `maxRows` rows are kept (and read, where the engine allows); `truncated` says more existed.
+   */
+  execute(sql: string, database: string | undefined, maxRows?: number): Promise<QueryResult>;
   quoteIdent(name: string): string;
   qualifiedName(ref: TableRef): string;
 }

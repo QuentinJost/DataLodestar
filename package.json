@@ -2,7 +2,7 @@
   "name": "datalodestar",
   "displayName": "DataLodestar — MySQL, PostgreSQL, MongoDB & Redis client",
   "description": "Graphical database client for MySQL/MariaDB, PostgreSQL, MongoDB and Redis: browse databases, tables, collections and keys, inspect structure, run queries, SSH tunnels, auto/manual transactions.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "dremsis",
   "author": "dremsis",
   "license": "MIT",
@@ -78,6 +78,11 @@
         "title": "Delete Connection",
         "category": "DataLodestar",
         "icon": "$(trash)"
+      },
+      {
+        "command": "dataLodestar.resetHostKey",
+        "title": "Reset Pinned SSH Host Key",
+        "category": "DataLodestar"
       },
       {
         "command": "dataLodestar.connect",
@@ -237,6 +242,11 @@
           "group": "4_edit@2"
         },
         {
+          "command": "dataLodestar.resetHostKey",
+          "when": "view == dataLodestar.connections && viewItem =~ /^connection/",
+          "group": "4_edit@3"
+        },
+        {
           "command": "dataLodestar.refresh",
           "when": "view == dataLodestar.connections && viewItem =~ /^(connection\\.on|database|folder)/",
           "group": "5_misc@1"
@@ -332,6 +342,13 @@
           ],
           "description": "Default page size of the table data viewer."
         },
+        "dataLodestar.maxCellChars": {
+          "type": "number",
+          "default": 500,
+          "minimum": 20,
+          "maximum": 100000,
+          "description": "Characters shown in a grid cell before it is cut with …; its tooltip holds up to 8 times more. Lower it for tables of long texts."
+        },
         "dataLodestar.binaryDisplay": {
           "type": "string",
           "default": "auto",
@@ -352,6 +369,11 @@
             "Base64"
           ],
           "description": "Default display of binary columns (BINARY, VARBINARY, BLOB, bytea). Each grid column can be switched from its header."
+        },
+        "dataLodestar.csvEscapeFormulas": {
+          "type": "boolean",
+          "default": true,
+          "description": "Copy as CSV: quote cells starting with =, +, -, @, tab or CR and prefix them with ' so a spreadsheet does not run them as formulas. Plain numbers such as -1 are left as they are. Double-click copy of a single cell is always raw."
         },
         "dataLodestar.stopOnError": {
           "type": "boolean",
@@ -379,14 +401,17 @@
     "mongodb": "^6.21.0",
     "mysql2": "^3.15.0",
     "pg": "^8.16.0",
+    "pg-cursor": "^2.22.0",
     "ssh2": "^1.17.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/pg": "^8.15.0",
+    "@types/pg-cursor": "^2.7.2",
     "@types/ssh2": "^1.15.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^4.0.0",
+    "playwright-core": "1.48.0",
     "typescript": "^5.9.0"
   }
 }

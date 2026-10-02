@@ -11,6 +11,7 @@
     binaryModes: saved.binaryModes || {},
   };
   let binaryDefault = 'auto';
+  let maxCell;
   let sortStyle = 'sql';
   let jsonView = !!saved.jsonView;
   let lastData = null;
@@ -74,6 +75,7 @@
   }
 
   function renderData(msg) {
+    if (msg.documents && !msg.rows.length) msg.rows = SqlMongoRows.rowsFromDocuments(msg.columns, msg.documents);
     lastData = msg;
     $('apply').disabled = false;
     const from = msg.rows.length ? state.offset + 1 : 0;
@@ -99,6 +101,7 @@
       onCopy: (text) => vscode.postMessage({ type: 'copy', text }),
       binaryModes: state.binaryModes,
       binaryDefault,
+      maxCell,
       // Formatting is client-side: re-render the current page, no query.
       onBinaryMode: (column, mode) => {
         state.binaryModes[column] = mode;
@@ -202,6 +205,7 @@
       case 'init':
         if (!saved.limit) state.limit = msg.pageSize;
         binaryDefault = msg.binaryDisplay || 'auto';
+        maxCell = msg.maxCellChars;
         sortStyle = msg.sortStyle || 'sql';
         if (msg.labels) {
           $('whereLabel').textContent = msg.labels.where;

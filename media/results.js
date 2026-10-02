@@ -3,17 +3,24 @@
   const tabs = document.getElementById('tabs');
   const status = document.getElementById('status');
   const content = document.getElementById('content');
+  const saved = vscode.getState() || {};
   let items = [];
   let active = 0;
   let binaryDefault = 'auto';
-  let jsonView = false;
+  let escapeFormulas = true;
+  let maxCell;
+  let jsonView = !!saved.jsonView;
   /** Per column name, kept across runs so a re-run keeps the chosen format. */
-  const binaryModes = {};
+  const binaryModes = saved.binaryModes || {};
+  /** The page is not retained when hidden: what the user chose survives the reload. */
+  const persist = () => vscode.setState({ active, jsonView, binaryModes });
   const gridOpts = () => ({
     binaryModes,
     binaryDefault,
+    maxCell,
     onBinaryMode: (column, mode) => {
       binaryModes[column] = mode;
+      persist();
       draw();
     },
   });
@@ -26,7 +33,8 @@
     return item.affectedRows !== undefined ? `${item.affectedRows} affected` : 'OK';
   }
 
-  function draw() {
+  /** Tab strip: rebuilt when the results change; a tab click only moves the highlight. */
+  function drawTabs() {
     tabs.replaceChildren();
     items.forEach((item, i) => {
       const b = document.createElement('button');
@@ -35,12 +43,17 @@
       b.title = short(item.sql);
       b.addEventListener('click', () => {
         active = i;
+        persist();
+        tabs.querySelectorAll('.tab').forEach((t, j) => t.classList.toggle('active', j === i));
         draw();
       });
       tabs.appendChild(b);
     });
     tabs.classList.toggle('hidden', items.length < 2);
+  }
 
+  /** Status line and content pane of the active tab. */
+  function draw() {
     const item = items[active];
     status.replaceChildren();
     content.replaceChildren();
@@ -57,7 +70,9 @@
     if (item.truncated) {
       const w = document.createElement('span');
       w.className = 'warn';
-      w.textContent = `Display limited to ${item.rows.length} rows (dataLodestar.maxRows).`;
+      w.textContent = item.stopped
+        ? `Stopped after ${item.rows.length} rows (dataLodestar.maxRows): the server did not run the statement to the end.`
+        : `Display limited to ${item.rows.length} rows (dataLodestar.maxRows).`;
       status.append(w);
     }
     if (item.documents) {
@@ -66,6 +81,7 @@
       toggle.textContent = jsonView ? 'Grid' : 'JSON';
       toggle.addEventListener('click', () => {
         jsonView = !jsonView;
+        persist();
         draw();
       });
       status.append(toggle);
@@ -74,7 +90,7 @@
       const copy = document.createElement('button');
       copy.className = 'secondary';
       copy.textContent = 'Copy as CSV';
-      copy.addEventListener('click', () => vscode.postMessage({ type: 'copy', text: SqlGrid.toCsv(item.columns, item.rows, gridOpts()) }));
+      copy.addEventListener('click', () => vscode.postMessage({ type: 'copy', text: SqlGrid.toCsv(item.columns, item.rows, { ...gridOpts(), escapeFormulas }) }));
       status.append(copy);
     }
     status.append(sql);
@@ -101,11 +117,16 @@
 
   window.addEventListener('message', (e) => {
     if (e.data.type === 'results') {
-      items = e.data.items;
+      items = e.data.items.map((x) => (x.documents && !x.rows.length ? { ...x, rows: SqlMongoRows.rowsFromDocuments(x.columns, x.documents) } : x));
       binaryDefault = e.data.binaryDisplay || 'auto';
+      escapeFormulas = e.data.csvEscapeFormulas !== false;
+      maxCell = e.data.maxCellChars;
       const firstError = items.findIndex((x) => x.error);
       const lastGrid = items.map((x) => x.columns.length > 0).lastIndexOf(true);
-      active = firstError >= 0 ? firstError : lastGrid >= 0 ? lastGrid : items.length - 1;
+      const restoredTab = e.data.restored && saved.active < items.length ? saved.active : undefined;
+      active = restoredTab ?? (firstError >= 0 ? firstError : lastGrid >= 0 ? lastGrid : items.length - 1);
+      persist();
+      drawTabs();
       draw();
     }
   });

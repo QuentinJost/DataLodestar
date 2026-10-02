@@ -574,6 +574,51 @@ test('mysql: without a strict sql_mode, a value MySQL would truncate fails the s
   });
 });
 
+test('mysql: a BEGIN implicitly committed since (DDL) does not make a save half-done', { skip }, async () => {
+  await withMysqlEditTable(async (d, _other, save, names) => {
+    await d.execute('BEGIN', 'shop');
+    await d.execute('CREATE TABLE IF NOT EXISTS edit_checks_ddl (i INT)', 'shop'); // commits the BEGIN
+    try {
+      assert.equal(d.pendingTransaction, true, 'what the extension believes');
+      await assert.rejects(save([{ name: 'kept?' }, { n: '1' }]), (err: RowEditError) => err.index === 1);
+      assert.deepEqual(await names(), ['a', 'b'], 'the first row is undone too');
+      assert.equal(d.pendingTransaction, false);
+      await save([{ name: 'A' }]);
+      assert.equal(d.pendingTransaction, false, 'committed on its own');
+      assert.deepEqual(await names(), ['A', 'b']);
+    } finally {
+      await d.execute('DROP TABLE IF EXISTS edit_checks_ddl', 'shop');
+    }
+  });
+});
+
+test('mysql: a deadlock during a save says the whole transaction was rolled back', { skip }, async () => {
+  await withMysqlEditTable(async (d, other, save, names) => {
+    await d.setTxMode('manual');
+    await d.execute("UPDATE edit_checks SET name = 'mine' WHERE id = 2", 'shop'); // d locks row 2
+    await other.setTxMode('manual');
+    // other locks row 1 and writes more: InnoDB picks the lighter transaction, d's, as the victim.
+    await other.execute("UPDATE edit_checks SET name = 'theirs' WHERE id = 1", 'shop');
+    await other.execute("INSERT INTO edit_checks VALUES (10, 10, 'x'), (11, 11, 'x'), (12, 12, 'x'), (13, 13, 'x')", 'shop');
+    const saving = save([{ name: 'edited' }]); // waits for row 1
+    await new Promise((r) => setTimeout(r, 300));
+    const blocked = other.execute("UPDATE edit_checks SET name = 'theirs' WHERE id = 2", 'shop'); // waits for row 2: deadlock
+    try {
+      await assert.rejects(saving, /Row id = 1: Deadlock found.* The server rolled back the whole transaction, earlier changes included\./);
+      assert.equal(d.pendingTransaction, false, 'nothing is left to commit');
+      await blocked;
+      await other.commit();
+      assert.deepEqual((await names()).slice(0, 2), ['theirs', 'theirs'], "d's own write went with the rollback");
+    } finally {
+      // Whatever failed, free both sessions' locks: the table is dropped next.
+      await d.rollback().catch(() => undefined);
+      await Promise.allSettled([saving, blocked]);
+      await other.rollback().catch(() => undefined);
+      await other.setTxMode('auto');
+    }
+  });
+});
+
 test('postgres: dates and times read as the server writes them, so an edit writes them back unchanged', { skip }, async () => {
   await withDriver('postgres', undefined, async (d) => {
     await d.execute("SET TimeZone = 'Europe/Paris'", undefined);

@@ -16,6 +16,10 @@ interface CoreConnection {
 
 /** "Query execution was interrupted": the answer to our own KILL QUERY. */
 const ER_QUERY_INTERRUPTED = 1317;
+/** OK packet status bit: a transaction is open on the server. */
+const SERVER_STATUS_IN_TRANS = 0x0001;
+/** "SAVEPOINT … does not exist": the transaction holding it was rolled back (deadlock, lock wait timeout). */
+const ER_SP_DOES_NOT_EXIST = 1305;
 
 export class MysqlDriver implements SqlDriver {
   readonly kind = 'mysql' as const;
@@ -238,8 +242,23 @@ export class MysqlDriver implements SqlDriver {
       const conn = this.session!;
       // A transaction is open in manual mode (autocommit off) or after a BEGIN typed in auto mode;
       // START TRANSACTION there would commit it.
-      const inTx = this.mode === 'manual' || this.pendingTransaction;
-      await conn.query(inTx ? `SAVEPOINT ${EDIT_SAVEPOINT}` : 'START TRANSACTION');
+      let inTx = this.mode === 'manual' || this.pendingTransaction;
+      if (inTx) {
+        const [header] = await conn.query(`SAVEPOINT ${EDIT_SAVEPOINT}`);
+        // No transaction holds the savepoint, so it would undo nothing: in manual mode none has started
+        // yet (a SAVEPOINT does not start one), so start it; after a typed BEGIN, it was implicitly
+        // committed since (DDL, LOCK TABLES, SET autocommit = 1), so the save goes on its own.
+        if (!((header as mysql.ResultSetHeader).serverStatus & SERVER_STATUS_IN_TRANS)) {
+          if (this.mode === 'manual') {
+            await conn.query('START TRANSACTION');
+            await conn.query(`SAVEPOINT ${EDIT_SAVEPOINT}`);
+          } else {
+            inTx = false;
+            this.pendingTransaction = false;
+          }
+        }
+      }
+      if (!inTx) await conn.query('START TRANSACTION');
       try {
         await applyUpdates(
           updates,
@@ -257,7 +276,15 @@ export class MysqlDriver implements SqlDriver {
         );
         await conn.query(inTx ? `RELEASE SAVEPOINT ${EDIT_SAVEPOINT}` : 'COMMIT');
       } catch (err) {
-        await conn.query(inTx ? `ROLLBACK TO SAVEPOINT ${EDIT_SAVEPOINT}` : 'ROLLBACK').catch(() => undefined);
+        try {
+          await conn.query(inTx ? `ROLLBACK TO SAVEPOINT ${EDIT_SAVEPOINT}` : 'ROLLBACK');
+        } catch (undo) {
+          // A deadlock rolled the whole transaction back, the user's own writes included.
+          if ((undo as mysql.QueryError).errno === ER_SP_DOES_NOT_EXIST) {
+            this.pendingTransaction = false;
+            throw new Error(`${(err as Error).message} The server rolled back the whole transaction, earlier changes included.`);
+          }
+        }
         throw err;
       }
       if (inTx) this.pendingTransaction = true;

@@ -219,7 +219,8 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
 - For a MySQL `CALL` returning several result sets, only the first is shown.
 - PostgreSQL opens one session per database; one left idle for 10 minutes, outside a transaction,
   is closed and reopened on the next statement. A session that ran `SET`, `PREPARE`, `LISTEN`,
-  `DECLARE`, `LOAD`, `CREATE TEMP…`, `set_config()` or took an advisory lock stays open.
+  `DECLARE`, `LOAD`, `CREATE TEMP…`, `SELECT … INTO TEMP`, `set_config()` or took an advisory lock
+  stays open.
 - Redis Cluster and Sentinel are not supported (single server only). Values and query results are
   read-only in the viewers; change data with commands.
 - A MongoDB query can be cancelled only if the user may run `$currentOp` / `killOp`.

@@ -75,3 +75,23 @@ test('viewer conditions cannot smuggle a second statement', () => {
   assert.throws(() => assertSingleStatement('SELECT * FROM t WHERE 1=1; DROP TABLE t', 'postgres'), /Only one condition/);
   assert.throws(() => assertSingleStatement('SELECT * FROM t WHERE 1=1; DELETE FROM t -- ', 'mysql'), /Only one condition/);
 });
+
+import { holdsSessionState } from '../drivers/postgres';
+
+test('postgres: statements that leave state in the session keep it open when idle', () => {
+  const kept = [
+    'SET search_path = app',
+    'CREATE TEMP TABLE t (i int)',
+    "SELECT set_config('app.user', 'ann', false)",
+    'SELECT pg_advisory_lock(1)',
+    'SELECT pg_try_advisory_lock(42)',
+    'SELECT pg_advisory_lock_shared(1)',
+    'SELECT pg_try_advisory_lock_shared(1, 2)',
+    'SELECT 1 AS i INTO TEMP t',
+    'SELECT * INTO TEMPORARY TABLE t FROM src',
+  ];
+  for (const sql of kept) assert.equal(holdsSessionState(sql), true, sql);
+  for (const sql of ['SELECT 1', 'INSERT INTO temp_log VALUES (1)', 'SELECT pg_advisory_unlock(1)', 'CREATE TABLE t (i int)']) {
+    assert.equal(holdsSessionState(sql), false, sql);
+  }
+});

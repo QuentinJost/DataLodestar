@@ -341,6 +341,23 @@ test('postgres: idle sessions close unless they hold a transaction or state, and
   }
 });
 
+test('postgres: an idle session holding a lock or a temp table is kept', { skip }, async () => {
+  const { PostgresDriver, SESSION_IDLE_MS } = await import('../drivers/postgres');
+  const d = new PostgresDriver(endpoint('postgres'));
+  await d.connect();
+  try {
+    await d.execute('SELECT pg_try_advisory_lock(42)', 'postgres');
+    await d.execute('SELECT 1 AS i INTO TEMP kept', 'analytics');
+    assert.deepEqual(await d.closeIdleSessions(Date.now() + SESSION_IDLE_MS + 1000), [], 'the lock and the temp table keep their sessions');
+    await withDriver('postgres', undefined, async (other) => {
+      assert.deepEqual((await other.execute('SELECT pg_try_advisory_lock(42)', undefined)).rows, [[false]], 'lock still held');
+    });
+    assert.deepEqual((await d.execute('SELECT i FROM kept', 'analytics')).rows, [[1]]);
+  } finally {
+    await d.close();
+  }
+});
+
 test('ssh: a changed host key refused by the prompt stops the tunnel', { skip }, async () => {
   const cfg = { enabled: true, host: env.SSH_HOST!, port: 22, username: 'tunnel', auth: 'password' as const, hostFingerprint: 'SHA256:not-the-real-key' };
   const asked: (string | undefined)[] = [];

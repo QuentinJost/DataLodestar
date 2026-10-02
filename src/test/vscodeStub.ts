@@ -45,9 +45,17 @@ export class MarkdownString {
 
 export const ViewColumn = { Active: -1, Beside: -2 };
 
-export const Uri = {
-  joinPath: (base: { path: string }, ...parts: string[]) => ({ path: [base.path, ...parts].join('/') }),
-};
+export class Uri {
+  constructor(readonly path: string) {}
+
+  toString(): string {
+    return this.path;
+  }
+
+  static joinPath(base: { path: string }, ...parts: string[]): Uri {
+    return new Uri([base.path, ...parts].join('/'));
+  }
+}
 
 /** A webview panel driven by the test: what its page posts, and its visibility. */
 export class FakeWebviewPanel {
@@ -81,12 +89,26 @@ export class FakeWebviewPanel {
     this.visible = visible;
     this.viewStateEmitter.fire({ webviewPanel: this });
   }
+
+  /** The user closes the panel. */
+  dispose(): void {
+    this.disposeEmitter.fire();
+  }
 }
+
+export enum StatusBarAlignment {
+  Left = 1,
+  Right = 2,
+}
+
+const activeEditor = new EventEmitter<unknown>();
 
 /** Panels created by `window.createWebviewPanel`, newest last. */
 export const panels: FakeWebviewPanel[] = [];
 /** Calls to `commands.executeCommand`. */
 export const executed: unknown[][] = [];
+/** Handlers given to `commands.registerCommand`, by command id. */
+export const registered = new Map<string, (...args: unknown[]) => unknown>();
 /** Button the next message box answers with; undefined = dismissed. */
 export const answers: { next?: string } = {};
 
@@ -96,6 +118,11 @@ export const window = {
     panels.push(panel);
     return panel;
   },
+  createStatusBarItem: () => ({ text: '', tooltip: '', show: () => undefined, hide: () => undefined, dispose: () => undefined }),
+  createTreeView: () => ({ dispose: () => undefined }),
+  createTextEditorDecorationType: () => ({ dispose: () => undefined }),
+  activeTextEditor: undefined as unknown,
+  onDidChangeActiveTextEditor: activeEditor.event,
   showErrorMessage: async () => answers.next,
   showWarningMessage: async () => answers.next,
   showInformationMessage: async () => answers.next,
@@ -104,10 +131,16 @@ export const window = {
 
 export const commands = {
   executeCommand: async (...args: unknown[]) => void executed.push(args),
+  registerCommand: (id: string, handler: (...args: unknown[]) => unknown) => {
+    registered.set(id, handler);
+    return { dispose: () => undefined };
+  },
 };
 
 export const workspace = {
   getConfiguration: () => ({ get: <T>(_key: string, fallback: T) => fallback }),
+  /** Open documents, set by the test. */
+  textDocuments: [] as unknown[],
 };
 
 /** Makes `require('vscode')` resolve to this stub. */

@@ -66,6 +66,13 @@ button:disabled { opacity: 0.5; cursor: default; }
   border: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
 }
 .warn { color: var(--vscode-editorWarning-foreground); }
+.txbar {
+  display: flex; flex-wrap: wrap; gap: 4px var(--gap); align-items: center;
+  padding: 4px var(--gap); border-bottom: 1px solid var(--border);
+  border-left: 3px solid var(--vscode-editorWarning-foreground);
+  background: var(--vscode-inputValidation-warningBackground, transparent);
+}
+.txbar span { margin-right: auto; }
 .hidden { display: none !important; }
 
 .scroll { flex: 1; overflow: auto; min-height: 0; }

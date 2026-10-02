@@ -351,10 +351,16 @@ export class PostgresDriver implements SqlDriver {
 
   private endTransactions(verb: 'COMMIT' | 'ROLLBACK'): Promise<void> {
     return this.lock.run(async () => {
+      const rolledBack: string[] = [];
       for (const db of [...this.openTx]) {
-        await this.sessions.get(db)?.query(verb);
+        const res = await this.sessions.get(db)?.query(verb);
         this.openTx.delete(db);
         this.dirtyTx.delete(db);
+        // COMMIT of a transaction aborted by an error: PostgreSQL rolls it back instead, without an error.
+        if (verb === 'COMMIT' && res?.command === 'ROLLBACK') rolledBack.push(db);
+      }
+      if (rolledBack.length) {
+        throw new Error(`Nothing was committed on ${rolledBack.join(', ')}: an earlier error had aborted the transaction, so PostgreSQL rolled it back.`);
       }
     });
   }

@@ -2,7 +2,7 @@
   "name": "datalodestar",
   "displayName": "DataLodestar — MySQL, PostgreSQL, MongoDB & Redis client",
   "description": "Graphical database client for MySQL/MariaDB, PostgreSQL, MongoDB and Redis: browse databases, tables, collections and keys, inspect structure, run queries, SSH tunnels, auto/manual transactions.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "dremsis",
   "author": "dremsis",
   "license": "MIT",
@@ -282,6 +282,16 @@
           "command": "dataLodestar.runScript",
           "when": "(editorLangId == sql || dataLodestar.editorBound)",
           "group": "navigation@2"
+        },
+        {
+          "command": "dataLodestar.commit",
+          "when": "resourcePath in dataLodestar.pendingDocs",
+          "group": "navigation@3"
+        },
+        {
+          "command": "dataLodestar.rollback",
+          "when": "resourcePath in dataLodestar.pendingDocs",
+          "group": "navigation@4"
         }
       ],
       "commandPalette": [

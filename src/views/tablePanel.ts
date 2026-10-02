@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { AnyDriver } from '../drivers';
 import { MongoDriver } from '../drivers/mongo';
-import { SessionManager } from '../sessionManager';
+import { SessionManager, TxSessions } from '../sessionManager';
 import { CellValue, CollectionInfo, CollectionStructure, StructureView, TableRef, TableStructure } from '../types';
 import { assertSingleStatement } from '../sqlSplitter';
 import { renderPage } from './webview';
@@ -40,6 +40,7 @@ export interface DataSource {
 
 const BODY = `
 <div class="page">
+  <div id="txbar" class="txbar hidden" role="status" aria-live="polite"></div>
   <div class="tabs">
     <button class="tab" data-tab="data">Data</button>
     <button class="tab" data-tab="structure">Structure</button>
@@ -76,7 +77,7 @@ const BODY = `
 export class TablePanel {
   private static readonly open = new Map<string, TablePanel>();
 
-  static show(extensionUri: vscode.Uri, openSql: OpenSql, connId: string, source: DataSource, tab: Tab): void {
+  static show(extensionUri: vscode.Uri, sessions: TxSessions, openSql: OpenSql, connId: string, source: DataSource, tab: Tab): void {
     const existing = TablePanel.open.get(source.key);
     if (existing) {
       // A hidden panel reloads when revealed and may miss the message: 'ready' sends it again.
@@ -85,7 +86,7 @@ export class TablePanel {
       void existing.panel.webview.postMessage({ type: 'showTab', tab });
       return;
     }
-    TablePanel.open.set(source.key, new TablePanel(extensionUri, openSql, connId, source, tab));
+    TablePanel.open.set(source.key, new TablePanel(extensionUri, sessions, openSql, connId, source, tab));
   }
 
   private readonly panel: vscode.WebviewPanel;
@@ -94,6 +95,7 @@ export class TablePanel {
 
   private constructor(
     extensionUri: vscode.Uri,
+    private readonly sessions: TxSessions,
     private readonly openSql: OpenSql,
     private readonly connId: string,
     private readonly source: DataSource,
@@ -106,13 +108,21 @@ export class TablePanel {
       localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')],
     });
     this.panel.iconPath = new vscode.ThemeIcon(source.icon);
-    this.panel.webview.html = renderPage(this.panel.webview, extensionUri, source.title, BODY, ['table.js']);
+    this.panel.webview.html = renderPage(this.panel.webview, extensionUri, source.title, BODY, ['txBar.js', 'table.js']);
     this.panel.webview.onDidReceiveMessage((msg) => this.onMessage(msg));
-    this.panel.onDidDispose(() => TablePanel.open.delete(source.key));
+    const txChanges = sessions.onDidChange((id) => id === connId && this.postTx());
+    this.panel.onDidDispose(() => {
+      TablePanel.open.delete(source.key);
+      txChanges.dispose();
+    });
   }
 
   private post(msg: unknown): void {
     void this.panel.webview.postMessage(msg);
+  }
+
+  private postTx(): void {
+    this.post({ type: 'tx', ...this.sessions.txState(this.connId) });
   }
 
   private async onMessage(msg: { type: string; [k: string]: unknown }): Promise<void> {
@@ -129,6 +139,7 @@ export class TablePanel {
           sortStyle: this.source.sortStyle,
         });
         this.requestedTab = undefined;
+        this.postTx();
         break;
       case 'load': {
         const limit = Math.max(1, Math.min(10000, Math.floor(Number(msg.limit)) || 100));
@@ -161,6 +172,13 @@ export class TablePanel {
       case 'openSql':
         await this.openSql(this.connId, this.source.database, String(msg.text), msg.language ? String(msg.language) : this.source.queryLanguage);
         break;
+      case 'commit':
+      case 'rollback': {
+        // Sent again whatever happens: a failed commit leaves the bar's buttons usable.
+        const again = () => this.postTx();
+        await vscode.commands.executeCommand(`dataLodestar.${msg.type}`, this.connId).then(again, again);
+        break;
+      }
     }
   }
 }

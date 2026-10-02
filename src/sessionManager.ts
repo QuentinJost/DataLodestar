@@ -19,6 +19,16 @@ export class Session {
   }
 }
 
+/** What the Commit / Rollback bar of a panel shows for a connection. */
+export interface TxState {
+  pending: boolean;
+  /** False once disconnected or lost: the viewer must not reconnect by reading again. */
+  connected: boolean;
+  /** Commit sends EXEC, Rollback sends DISCARD. */
+  redis: boolean;
+  connection: string;
+}
+
 /** Opens, tracks and closes live sessions; owns the transaction-mode switches. */
 export class SessionManager implements vscode.Disposable {
   private readonly sessions = new Map<string, Session>();
@@ -163,13 +173,27 @@ export class SessionManager implements vscode.Disposable {
   }
 
   async commit(id: string): Promise<void> {
-    await this.sessions.get(id)?.driver.commit();
-    this.emit(id);
+    try {
+      await this.sessions.get(id)?.driver.commit();
+    } finally {
+      // A failed COMMIT (PostgreSQL: rolled back) still ends the transaction: the tree and bars follow.
+      this.emit(id);
+    }
   }
 
   async rollback(id: string): Promise<void> {
-    await this.sessions.get(id)?.driver.rollback();
-    this.emit(id);
+    try {
+      await this.sessions.get(id)?.driver.rollback();
+    } finally {
+      this.emit(id);
+    }
+  }
+
+  /** Pending changes of a connection, for the Commit / Rollback bars of the panels. */
+  txState(id: string): TxState {
+    const config = this.store.get(id);
+    const session = this.sessions.get(id);
+    return { pending: !!session?.driver.pendingTransaction, connected: !!session, redis: config?.kind === 'redis', connection: config?.name ?? '' };
   }
 
   notifySchemaChange(id: string): void {
@@ -195,6 +219,9 @@ export class SessionManager implements vscode.Disposable {
     this.schemaChanged.dispose();
   }
 }
+
+/** What a panel needs from the sessions for its Commit / Rollback bar. */
+export type TxSessions = Pick<SessionManager, 'onDidChange' | 'txState'>;
 
 /** Opens tunnel + driver for a config; used by sessions and by the "Test" button. */
 export async function connectWith(

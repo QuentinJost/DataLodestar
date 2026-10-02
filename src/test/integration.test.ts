@@ -304,6 +304,30 @@ test('postgres: TLS checks the certificate name, not the host pg dials', { skip 
   assert.deepEqual(await tryConnect({ sslVerify: false }), [[1]], 'opt-out still connects');
 });
 
+test('postgres: Commit of a transaction aborted by an error says nothing was committed', { skip }, async () => {
+  await withDriver('postgres', undefined, async (d) => {
+    await d.execute('DROP TABLE IF EXISTS aborted_tx', undefined);
+    await d.execute('CREATE TABLE aborted_tx (id int PRIMARY KEY)', undefined);
+    try {
+      await d.setTxMode('manual');
+      await d.execute('INSERT INTO aborted_tx VALUES (1)', undefined);
+      await assert.rejects(d.execute("INSERT INTO aborted_tx VALUES ('abc')", undefined), /invalid input syntax/);
+      assert.equal(d.pendingTransaction, true, 'the aborted transaction still needs ending');
+      await assert.rejects(d.commit(), /Nothing was committed on postgres: an earlier error had aborted the transaction/);
+      assert.equal(d.pendingTransaction, false);
+      // A transaction without an error still commits quietly.
+      await d.execute('INSERT INTO aborted_tx VALUES (2)', undefined);
+      await d.commit();
+      // Read from auto mode: a read in manual mode would open a transaction that switching to auto leaves open.
+      await d.setTxMode('auto');
+      assert.deepEqual((await d.execute('SELECT count(*)::int FROM aborted_tx', undefined)).rows, [[1]]);
+    } finally {
+      await d.setTxMode('auto');
+      await d.execute('DROP TABLE IF EXISTS aborted_tx', undefined);
+    }
+  });
+});
+
 test('postgres: databases, schemas, structure, per-database manual transactions', { skip }, async () => {
   await withDriver('postgres', undefined, async (d) => {
     const existing = await d.execute("SELECT 1 FROM pg_database WHERE datname = 'analytics'", undefined);

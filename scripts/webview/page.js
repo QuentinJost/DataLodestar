@@ -5,10 +5,10 @@ const { chromium } = require('playwright-core');
 
 const media = (file) => fs.readFileSync(path.join(__dirname, '../../media', file), 'utf8');
 
-/** A page with the shared stylesheet, `body`, a stub of the VS Code API, then `scripts` from media/. */
+/** A page with the shared stylesheet, `body`, a stub of the VS Code API (messages kept in `posted`), then `scripts` from media/. */
 function html(body, scripts) {
   return `<!DOCTYPE html><html><head><style>${media('style.css')}</style></head><body>${body}
-<script>window.acquireVsCodeApi = () => ({ postMessage: () => undefined, getState: () => undefined, setState: () => undefined });</script>
+<script>window.posted = []; window.acquireVsCodeApi = () => ({ postMessage: (m) => window.posted.push(m), getState: () => undefined, setState: () => undefined });</script>
 ${scripts.map((s) => `<script>${media(s)}</script>`).join('\n')}
 </body></html>`;
 }
@@ -20,4 +20,7 @@ const frames = (page, n = 3) =>
     next(n);
   }), n);
 
-module.exports = { chromium, html, frames };
+/** The page markup of a panel: the `BODY` constant of its src/views/ file. */
+const panelBody = (file) => /const BODY =\s*([`'])([\s\S]*?)\1;/.exec(fs.readFileSync(path.join(__dirname, '../../src/views', file), 'utf8'))[2];
+
+module.exports = { chromium, html, frames, panelBody };

@@ -14,16 +14,17 @@ export function activate(ctx: vscode.ExtensionContext): void {
   const store = new ConnectionStore(ctx);
   void migrate(store);
   const sessions = new SessionManager(store);
-  const results = new ResultsPanel(ctx.extensionUri);
+  const results = new ResultsPanel(ctx.extensionUri, sessions);
   const runner = new QueryRunner(ctx, store, sessions, results);
   const tree = new NavigatorTree(store, sessions);
   const statusBar = new StatusBar(store, sessions, runner);
   const view = vscode.window.createTreeView('dataLodestar.connections', { treeDataProvider: tree, showCollapseAll: true });
   const openSql = (connId: string, database: string | undefined, text: string, language?: string) => runner.openSql(connId, database, text, language);
 
-  /** Connection targeted by a command: tree node, else active editor binding, else a quick pick. */
-  async function targetConnection(node?: NavNode | string, onlyConnected = false): Promise<string | undefined> {
+  /** Connection targeted by a command: tree node, editor title bar (its document), else active editor binding, else a quick pick. */
+  async function targetConnection(node?: NavNode | string | vscode.Uri, onlyConnected = false): Promise<string | undefined> {
     if (typeof node === 'string') return store.get(node) ? node : undefined;
+    if (node instanceof vscode.Uri) return runner.binding({ uri: node })?.connId;
     if (node instanceof ConnectionNode) return node.config.id;
     if (node && 'connId' in node) return node.connId;
     const editor = vscode.window.activeTextEditor;
@@ -118,8 +119,8 @@ export function activate(ctx: vscode.ExtensionContext): void {
   const showTable = (node: NavNode | undefined, tab: 'data' | 'structure') => {
     if (!node || !('connId' in node)) return;
     const name = store.get(node.connId)?.name ?? '';
-    if (node instanceof TableNode) TablePanel.show(ctx.extensionUri, openSql, node.connId, sqlSource(sessions, node.connId, name, node.table), tab);
-    else if (node instanceof CollectionNode) TablePanel.show(ctx.extensionUri, openSql, node.connId, mongoSource(sessions, node.connId, node.collection), tab);
+    if (node instanceof TableNode) TablePanel.show(ctx.extensionUri, sessions, openSql, node.connId, sqlSource(sessions, node.connId, name, node.table), tab);
+    else if (node instanceof CollectionNode) TablePanel.show(ctx.extensionUri, sessions, openSql, node.connId, mongoSource(sessions, node.connId, node.collection), tab);
     else if (node instanceof RedisDbNode) RedisPanel.show(ctx.extensionUri, sessions, openSql, node.connId, name, node.database);
   };
   register('dataLodestar.openTable', (node?: NavNode) => showTable(node, 'data'));

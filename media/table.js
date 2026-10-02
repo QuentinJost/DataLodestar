@@ -16,6 +16,7 @@
   let jsonView = !!saved.jsonView;
   let lastData = null;
   let structureLoaded = false;
+  let txPending = false;
 
   const where = $('where');
   const orderBy = $('orderBy');
@@ -44,6 +45,11 @@
     state.limit = Number(limit.value);
     if (resetOffset) state.offset = 0;
     persist();
+    request();
+  }
+
+  /** Asks for the page `state` describes: the filter and sort last applied, not what is being typed. */
+  function request() {
     $('dataError').classList.add('hidden');
     $('apply').disabled = true;
     $('info').textContent = 'Loading…';
@@ -240,6 +246,19 @@
       case 'structure':
         renderStructure(msg.structure);
         break;
+      case 'tx': {
+        // The transaction ended (commit or rollback): rows read through it may be gone.
+        const ended = txPending && !msg.pending;
+        txPending = msg.pending;
+        SqlTxBar.update($('txbar'), msg, (type) => vscode.postMessage({ type }));
+        // Ended by a disconnect (or a lost connection): reading again would reconnect.
+        if (ended && msg.connected) {
+          // A count made before the end may include rows rolled back.
+          $('countValue').textContent = '';
+          request();
+        }
+        break;
+      }
       case 'structureError':
         $('structure').innerHTML = '';
         const box = document.createElement('div');

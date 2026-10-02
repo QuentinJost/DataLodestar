@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { TxSessions } from '../sessionManager';
 import { CellValue } from '../types';
 import { renderPage } from './webview';
 
@@ -15,6 +16,8 @@ export interface ResultItem {
   documents?: unknown[];
 }
 
+const BODY = '<div class="page"><div class="txbar hidden" id="txbar" role="status" aria-live="polite"></div><div class="tabs" id="tabs"></div><div class="status" id="status"></div><div class="scroll" id="content"></div></div>';
+
 /** Single reusable panel showing the outcome of the last run, one tab per statement. */
 export class ResultsPanel {
   private panel?: vscode.WebviewPanel;
@@ -22,10 +25,18 @@ export class ResultsPanel {
   private pending?: ResultItem[];
   /** Last results shown, posted again when the (not retained) page reloads. */
   private last?: ResultItem[];
+  /** Connection of the last run, whose pending changes the page offers to commit. */
+  private connId?: string;
 
-  constructor(private readonly extensionUri: vscode.Uri) {}
+  constructor(
+    private readonly extensionUri: vscode.Uri,
+    private readonly sessions: TxSessions,
+  ) {
+    sessions.onDidChange((id) => id === this.connId && this.postTx());
+  }
 
-  show(items: ResultItem[]): void {
+  show(items: ResultItem[], connId: string): void {
+    this.connId = connId;
     if (!this.panel) {
       this.ready = false;
       this.panel = vscode.window.createWebviewPanel(
@@ -39,8 +50,8 @@ export class ResultsPanel {
         this.panel.webview,
         this.extensionUri,
         'SQL Results',
-        '<div class="page"><div class="tabs" id="tabs"></div><div class="status" id="status"></div><div class="scroll" id="content"></div></div>',
-        ['results.js'],
+        BODY,
+        ['txBar.js', 'results.js'],
       );
       this.panel.webview.onDidReceiveMessage((msg) => {
         if (msg.type === 'ready') {
@@ -50,6 +61,10 @@ export class ResultsPanel {
         } else if (msg.type === 'copy') {
           void vscode.env.clipboard.writeText(msg.text);
           vscode.window.setStatusBarMessage('Copied to clipboard', 2000);
+        } else if ((msg.type === 'commit' || msg.type === 'rollback') && this.connId) {
+          // Sent again whatever happens: a failed commit leaves the bar's buttons usable.
+          const again = () => this.postTx();
+          void vscode.commands.executeCommand(`dataLodestar.${msg.type}`, this.connId).then(again, again);
         }
       });
       this.panel.onDidChangeViewState((e) => {
@@ -77,5 +92,10 @@ export class ResultsPanel {
     const csvEscapeFormulas = settings.get<boolean>('csvEscapeFormulas', true);
     const maxCellChars = settings.get<number>('maxCellChars', 500);
     void this.panel?.webview.postMessage({ type: 'results', items, binaryDisplay, csvEscapeFormulas, maxCellChars, restored });
+    this.postTx();
+  }
+
+  private postTx(): void {
+    if (this.panel && this.ready && this.connId) void this.panel.webview.postMessage({ type: 'tx', ...this.sessions.txState(this.connId) });
   }
 }

@@ -52,7 +52,7 @@ export class QueryRunner {
     private readonly results: ResultsPanel,
   ) {}
 
-  binding(doc: vscode.TextDocument): Binding | undefined {
+  binding(doc: Pick<vscode.TextDocument, 'uri'>): Binding | undefined {
     const b = this.ctx.workspaceState.get<Record<string, Binding>>(BINDINGS_KEY, {})[doc.uri.toString()];
     return b && this.store.get(b.connId) ? b : undefined;
   }
@@ -123,7 +123,7 @@ export class QueryRunner {
     try {
       pieces = this.plan(session, config, source, cursor, state, maxRows, (start, end) => flash(editor, new vscode.Range(doc.positionAt(base + start), doc.positionAt(base + end))));
     } catch (err) {
-      this.results.show([{ sql: source.slice(0, 200), connection: config.name, columns: [], rows: [], error: (err as Error).message }]);
+      this.results.show([{ sql: source.slice(0, 200), connection: config.name, columns: [], rows: [], error: (err as Error).message }], binding.connId);
       return;
     }
     if (!pieces.length) {
@@ -173,7 +173,7 @@ export class QueryRunner {
     if (state.database !== binding.database) await this.setBinding(doc, { connId: binding.connId, database: state.database });
     this.sessions.emit(binding.connId);
     if (pieces.slice(0, items.length).some((p) => p.schema)) this.sessions.notifySchemaChange(binding.connId);
-    this.results.show(items);
+    this.results.show(items, binding.connId);
   }
 
   /** Splits the text into runnable pieces for the connection's engine. */

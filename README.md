@@ -119,10 +119,12 @@ is applied live. MongoDB and Redis have their own rules, below.
 
 - **Auto-commit**: every statement is committed immediately. `UPDATE`/`DELETE` without `WHERE`,
   `DROP` and `TRUNCATE` ask for confirmation (`dataLodestar.confirmDestructive`).
-- **Manual**: changes wait for **Commit** or **Rollback** (status bar, context menu or
-  command palette). After a write the connection turns orange and the status bar reads
-  *uncommitted*. Plain reads never raise that flag. Disconnecting, or switching back to auto,
-  with uncommitted changes asks whether to commit or roll back first.
+- **Manual**: changes wait for **Commit** or **Rollback**. After a write the connection turns
+  orange and the status bar reads *uncommitted*; plain reads never raise that flag. While changes
+  wait, the results panel and the table viewer show a **Commit** / **Rollback** bar, and the
+  editor title has ✓ / ↶ buttons next to ▶ (also: status bar, context menu, command palette).
+  A table viewer reloads its page once the transaction ends. Disconnecting, or switching back to
+  auto, with uncommitted changes asks whether to commit or roll back first.
 
 Each host uses one dedicated session for your statements and table browsing (so you see
 your own uncommitted rows), plus a separate auto-commit session for the tree and structure.
@@ -131,7 +133,8 @@ your own uncommitted rows), plus a separate auto-commit session for the tree and
   several databases of the host. A `USE x` typed in a script updates the editor's binding.
 - **PostgreSQL** has no cross-database statements: each database gets its own session and
   transaction; Commit / Rollback apply to all of them. After an error, PostgreSQL rejects further
-  statements until you roll back; the connection stays marked as pending for that reason.
+  statements until you roll back; the connection stays marked as pending for that reason. A Commit
+  then keeps nothing (PostgreSQL rolls the transaction back) and says so instead of "Committed".
 
 - **MongoDB**: manual mode uses a multi-document transaction and needs a replica set or a sharded
   cluster (a single-node replica set is enough); it is refused on a standalone server. MongoDB aborts
@@ -139,7 +142,8 @@ your own uncommitted rows), plus a separate auto-commit session for the tree and
   Index and collection changes (`createIndex`, `drop`…) run outside transactions, so they are refused
   while writes are pending: commit or roll back first.
 - **Redis** has no commit/rollback. Type `MULTI` in the editor: the connection turns orange, the
-  following commands are queued, then **Commit** sends `EXEC` and **Rollback** sends `DISCARD`.
+  following commands are queued, then **Commit** sends `EXEC` and **Rollback** sends `DISCARD`
+  (the bars name them so).
 
 ## SSH tunnels
 

@@ -252,7 +252,11 @@
         txPending = msg.pending;
         SqlTxBar.update($('txbar'), msg, (type) => vscode.postMessage({ type }));
         // Ended by a disconnect (or a lost connection): reading again would reconnect.
-        if (ended && msg.connected) request();
+        if (ended && msg.connected) {
+          // A count made before the end may include rows rolled back.
+          $('countValue').textContent = '';
+          request();
+        }
         break;
       }
       case 'structureError':

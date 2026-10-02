@@ -39,11 +39,13 @@ test('the end of the transaction hides the bar and reloads the page of rows', as
   await send(page, { type: 'tx', pending: true, connected: true, redis: false, connection: 'local' });
   await page.waitForSelector('#txbar:not(.hidden)');
   assert.equal(await loads(page), 1, 'no reload while nothing ended');
+  await send(page, { type: 'count', value: 500 });
   await page.fill('#where', 'id = 1'); // typed, not applied
   await send(page, { type: 'tx', pending: false, connected: true, redis: false, connection: 'local' });
   await page.waitForSelector('#txbar.hidden', { state: 'attached' });
   await page.waitForFunction(() => window.posted.filter((m) => m.type === 'load').length === 2);
   assert.equal(await loads(page), 2, 'rows rolled back must not stay on screen');
+  assert.equal(await page.textContent('#countValue'), '', 'nor a count made before the end');
   assert.equal(await page.evaluate(() => window.posted.filter((m) => m.type === 'load').at(-1).where), '', 'the filter last applied, not the one being typed');
   await page.close();
 });

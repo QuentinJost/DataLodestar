@@ -41,7 +41,8 @@ function value(node: Node, src: string): unknown {
         const key = p.key.type === 'Identifier' ? p.key.name : p.key.type === 'Literal' && (typeof p.key.value === 'string' || typeof p.key.value === 'number') ? String(p.key.value) : reject(p.key, 'This key');
         // Shorthand `{ a }` refers to a variable, which the viewer has none of.
         if (p.shorthand) return reject(p, `The shorthand property "${key}"`);
-        out[key] = value(p.value, src);
+        // A "__proto__" key is a field name here, not the object's prototype.
+        Object.defineProperty(out, key, { value: value(p.value, src), enumerable: true, writable: true, configurable: true });
       }
       return out;
     }

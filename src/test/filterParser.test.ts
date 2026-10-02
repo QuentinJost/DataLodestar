@@ -43,6 +43,13 @@ test('Date with numbers is a local date, as in the shell', () => {
   assert.throws(() => parseFilter("{ a: new Date(2026, '1') }"), /numbers only/);
 });
 
+test('a "__proto__" key is a field, as in JSON', () => {
+  const f = parseFilter('{ "__proto__": { a: 1 }, b: 2 }');
+  assert.deepEqual(Object.keys(f), ['__proto__', 'b']);
+  assert.deepEqual(Object.getOwnPropertyDescriptor(f, '__proto__')?.value, { a: 1 });
+  assert.equal(Object.getPrototypeOf(f), Object.prototype);
+});
+
 test('anything that could run code is refused', () => {
   const refused = [
     "{ a: require('child_process') }",

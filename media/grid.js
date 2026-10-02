@@ -122,6 +122,8 @@
     if (!scroller.clientHeight) {
       // Drawn while hidden (another tab): nothing can be measured yet, so draw again once shown.
       const observer = new ResizeObserver(() => {
+        // Replaced meanwhile (another tab, JSON view, error): nothing to draw any more.
+        if (!table.isConnected) return observer.disconnect();
         if (!scroller.clientHeight) return;
         observer.disconnect();
         render(container, columns, rows, opts);

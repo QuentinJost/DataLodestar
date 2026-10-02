@@ -242,15 +242,15 @@ export async function connectWith(
   }
 }
 
-/** Refuses a changed SSH host key; the way forward is the connection settings, not a click. */
+/** Refuses a changed SSH host key. Nothing accepts it from here: the reset command asks again, then the next connection does. */
 export async function showChangedHostKey(config: ConnectionConfig, host: string, expected: string, received: string): Promise<void> {
-  const open = 'Open connection settings';
+  const reset = 'Reset Pinned SSH Host Key…';
   const choice = await vscode.window.showErrorMessage(
     `SSH HOST KEY CHANGED for ${host}: the connection was refused.\nExpected ${expected}\nReceived ${received}\n` +
       'Someone may be intercepting the connection. If the server key really changed (reinstall, new host), ' +
       'check the new fingerprint with its administrator, then run "DataLodestar: Reset Pinned SSH Host Key".',
     { modal: true },
-    open,
+    reset,
   );
-  if (choice === open) await vscode.commands.executeCommand('dataLodestar.editConnection', config.id);
+  if (choice === reset) await vscode.commands.executeCommand('dataLodestar.resetHostKey', config.id);
 }

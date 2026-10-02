@@ -146,8 +146,8 @@ your own uncommitted rows), plus a separate auto-commit session for the tree and
 Set **Host / port** as seen *from the SSH server* (often `127.0.0.1:3306`). The first connection
 shows the server's key fingerprint (`SHA256:…`) for you to trust; it is then pinned. A changed
 key refuses the connection, with no button to accept it: if the server key really changed, check
-the new fingerprint with its administrator, run **Reset Pinned SSH Host Key** on the connection
-(it asks you to confirm, naming the host), then connect and trust the new key. Private keys default to `~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa`.
+the new fingerprint with its administrator, run **Reset Pinned SSH Host Key** (from that message or
+on the connection; it asks you to confirm, naming the host), then connect and trust the new key. Private keys default to `~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa`.
 The **SSH agent** option uses `SSH_AUTH_SOCK`.
 
 ## Security notes

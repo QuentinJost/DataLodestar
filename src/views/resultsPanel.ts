@@ -16,7 +16,7 @@ export interface ResultItem {
   documents?: unknown[];
 }
 
-const BODY = '<div class="page"><div class="txbar hidden" id="txbar"></div><div class="tabs" id="tabs"></div><div class="status" id="status"></div><div class="scroll" id="content"></div></div>';
+const BODY = '<div class="page"><div class="txbar hidden" id="txbar" role="status" aria-live="polite"></div><div class="tabs" id="tabs"></div><div class="status" id="status"></div><div class="scroll" id="content"></div></div>';
 
 /** Single reusable panel showing the outcome of the last run, one tab per statement. */
 export class ResultsPanel {

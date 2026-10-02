@@ -40,7 +40,7 @@ export interface DataSource {
 
 const BODY = `
 <div class="page">
-  <div id="txbar" class="txbar hidden"></div>
+  <div id="txbar" class="txbar hidden" role="status" aria-live="polite"></div>
   <div class="tabs">
     <button class="tab" data-tab="data">Data</button>
     <button class="tab" data-tab="structure">Structure</button>

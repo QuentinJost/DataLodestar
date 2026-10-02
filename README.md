@@ -181,7 +181,7 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   default the host; set it when the host is an IP or an alias, as is common through an SSH tunnel
   where the host is often `127.0.0.1` as seen from the SSH server). Unchecking **Verify the
   server certificate** encrypts without checking, so an attacker on the path can read the password.
-  Connections saved before 0.5.0 keep working unchecked and are listed in a warning at startup. A
+  TLS connections saved before 0.5.0 keep working unchecked and are listed in a warning at startup. A
   MongoDB connection string sets its own TLS options (`tls=true`, `tlsCAFile=…`). When the
   certificate name is not the host (or the host is an IP), MySQL checks it right after the
   handshake rather than during it.

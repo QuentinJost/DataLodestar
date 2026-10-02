@@ -123,6 +123,10 @@
     syncVisibility();
   });
   $('uri').addEventListener('input', syncVisibility);
+  // Turning TLS on proposes verification, whatever was stored while TLS was off.
+  $('ssl').addEventListener('change', () => {
+    if ($('ssl').checked) $('sslVerify').checked = true;
+  });
   ['sshEnabled', 'sshAuth', 'savePassword', 'ssl', 'sslVerify'].forEach((id) => $(id).addEventListener('change', syncVisibility));
   $('browseKey').addEventListener('click', () => vscode.postMessage({ type: 'browseKey' }));
   $('browseCa').addEventListener('click', () => vscode.postMessage({ type: 'browseCa' }));

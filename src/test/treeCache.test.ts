@@ -33,7 +33,8 @@ function setup() {
   return { tree, calls, driver, changed, schema, fired, expandAll };
 }
 
-test('pending-transaction changes redraw one connection from the cache: no metadata query', async () => {
+// The end of pending changes also fires onDidChangeSchema (last test), which lists again.
+test('a session state change alone redraws one connection from the cache: no metadata query', async () => {
   const { calls, driver, changed, fired, expandAll } = setup();
   await expandAll();
   const before = { ...calls };

@@ -80,7 +80,7 @@ export class TablePanel {
     const existing = TablePanel.open.get(source.key);
     if (existing) {
       // A hidden panel reloads when revealed and may miss the message: 'ready' sends it again.
-      existing.requestedTab = tab;
+      if (!existing.panel.visible) existing.requestedTab = tab;
       existing.panel.reveal();
       void existing.panel.webview.postMessage({ type: 'showTab', tab });
       return;

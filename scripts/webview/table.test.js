@@ -188,3 +188,18 @@ test('editing: a page that arrives while a cell is being edited keeps the text o
   assert.deepEqual((await posted(page, 'save'))[0].edits, [{ key: [1], changes: { name: 'typed for id 1' } }]);
   await page.close();
 });
+
+test('editing: a page reloaded while a save runs shows Saving… until the outcome arrives', async () => {
+  const page = await browser.newPage();
+  await page.setContent(html(BODY, SCRIPTS));
+  await send(page, { type: 'init', pageSize: 100, saving: true, labels: { where: 'WHERE', orderBy: 'ORDER BY', wherePlaceholder: '', orderPlaceholder: '' }, sortStyle: 'sql' });
+  await send(page, EDITING);
+  await send(page, { type: 'data', columns: ['id', 'name', 'photo'], rows: [[1, 'a', null]], hasMore: false, durationMs: 1, text: 'SELECT', quoted: {} });
+  await page.waitForSelector(cell(0, 1));
+  assert.equal(await page.textContent('#saveEdits'), 'Saving…');
+  await page.dblclick(cell(0, 1));
+  assert.equal(await page.$('textarea.cell-editor'), null, 'no edit while the save runs');
+  await send(page, { type: 'saved' });
+  await page.waitForFunction(() => document.getElementById('saveEdits').textContent === 'Save');
+  await page.close();
+});

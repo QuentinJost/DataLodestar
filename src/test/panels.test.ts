@@ -198,3 +198,32 @@ test('table: sqlSource edits a table by its key, never a view', async () => {
   const view = sqlSource(sessions as never, 'c1', 'local', { database: 'shop', name: 'v', type: 'view' });
   await assert.rejects(view.save!([{ key: [1], changes: { name: 'x' } }]), /cannot be edited: views are read-only/);
 });
+
+test('table: a save that ends while the panel is hidden is told to the reloaded page', async () => {
+  const sessions = fakeSessions();
+  let finish!: () => void;
+  const source = {
+    key: 't6', title: 't6', icon: 'table', database: 'shop', queryLanguage: 'sql', labels: {}, sortStyle: 'sql',
+    editing: async () => ({ editable: true, key: ['id'], columns: { id: { editable: true, nullable: false } } }),
+    save: () => new Promise<void>((resolve) => (finish = resolve)),
+  };
+  TablePanel.show(extensionUri, sessions, async () => undefined, 'c1', source as never, 'data');
+  const panel = panels.at(-1)!;
+  panel.fromPage({ type: 'ready' });
+  panel.fromPage({ type: 'save', edits: [{ key: [1], changes: { id: '2' } }] });
+  await settle();
+  panel.setVisible(false); // not retained: the page is gone
+  panel.setVisible(true);
+  panel.fromPage({ type: 'ready' });
+  assert.equal(sent(panel, 'init').at(-1)!.saving, true, 'the reloaded page shows Saving…');
+  panel.setVisible(false);
+  finish();
+  await settle();
+  assert.equal(sent(panel, 'saved').length, 0, 'nothing posted to a page that is gone');
+  panel.setVisible(true);
+  panel.fromPage({ type: 'ready' });
+  assert.equal(sent(panel, 'init').at(-1)!.saving, false);
+  assert.equal(sent(panel, 'saved').length, 1, 'the outcome reaches the reloaded page');
+  panel.fromPage({ type: 'ready' });
+  assert.equal(sent(panel, 'saved').length, 1, 'once');
+});

@@ -85,6 +85,8 @@ const BODY = `
   </div>
 </div>`;
 
+type SaveOutcome = { type: 'saved' } | { type: 'saveError'; message: string; index?: number };
+
 /** Data browser (filter / sort / paging) and structure view for a table or a collection. */
 export class TablePanel {
   private static readonly open = new Map<string, TablePanel>();
@@ -104,6 +106,12 @@ export class TablePanel {
   private readonly panel: vscode.WebviewPanel;
   /** Tab to open on the next 'ready': the initial one, then any asked while hidden. */
   private requestedTab?: Tab;
+  /** False from hiding (the page is gone) to its next 'ready'. */
+  private ready = false;
+  /** A save is running: a page reloaded meanwhile shows "Saving…". */
+  private saving = false;
+  /** Outcome of a save that ended while the page was hidden: sent on its next 'ready'. */
+  private saveOutcome?: SaveOutcome;
 
   private constructor(
     extensionUri: vscode.Uri,
@@ -123,6 +131,10 @@ export class TablePanel {
     this.panel.webview.html = renderPage(this.panel.webview, extensionUri, source.title, BODY, ['txBar.js', 'table.js']);
     this.panel.webview.onDidReceiveMessage((msg) => this.onMessage(msg));
     const txChanges = sessions.onDidChange((id) => id === connId && this.postTx());
+    // Not retained: a hidden page is gone, so the outcome of a save waits for its next 'ready'.
+    this.panel.onDidChangeViewState((e) => {
+      if (!e.webviewPanel.visible) this.ready = false;
+    });
     this.panel.onDidDispose(() => {
       TablePanel.open.delete(source.key);
       txChanges.dispose();
@@ -149,7 +161,13 @@ export class TablePanel {
           maxCellChars: settings.get<number>('maxCellChars', 500),
           labels: this.source.labels,
           sortStyle: this.source.sortStyle,
+          saving: this.saving,
         });
+        this.ready = true;
+        if (this.saveOutcome) {
+          this.post(this.saveOutcome);
+          this.saveOutcome = undefined;
+        }
         this.requestedTab = undefined;
         this.postTx();
         if (this.source.editing) {
@@ -160,16 +178,23 @@ export class TablePanel {
           );
         }
         break;
-      case 'save':
+      case 'save': {
+        let outcome: SaveOutcome;
+        this.saving = true;
         try {
           if (!this.source.save) throw new Error('This viewer is read-only.');
           await this.source.save(msg.edits);
-          this.post({ type: 'saved' });
+          outcome = { type: 'saved' };
         } catch (err) {
-          this.post({ type: 'saveError', message: (err as Error).message, index: err instanceof RowEditError ? err.index : undefined });
+          outcome = { type: 'saveError', message: (err as Error).message, index: err instanceof RowEditError ? err.index : undefined };
+        } finally {
+          this.saving = false;
         }
+        if (this.ready) this.post(outcome);
+        else this.saveOutcome = outcome;
         this.postTx();
         break;
+      }
       case 'load': {
         const limit = Math.max(1, Math.min(10000, Math.floor(Number(msg.limit)) || 100));
         const offset = Math.max(0, Math.floor(Number(msg.offset)) || 0);

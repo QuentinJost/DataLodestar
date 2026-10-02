@@ -330,6 +330,8 @@
     switch (msg.type) {
       case 'init':
         if (!saved.limit) state.limit = msg.pageSize;
+        // Reloaded while a save runs: its outcome comes once it ends.
+        saving = !!msg.saving;
         binaryDefault = msg.binaryDisplay || 'auto';
         maxCell = msg.maxCellChars;
         sortStyle = msg.sortStyle || 'sql';

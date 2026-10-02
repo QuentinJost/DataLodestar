@@ -376,7 +376,7 @@ test('postgres: databases, schemas, structure, per-database manual transactions'
     assert.deepEqual(bin.rows[0][0], { b: 'deadbeef', n: 4 });
     assert.equal(format(bin.rows[0][1], 'uuid'), UUID);
     await d.execute("INSERT INTO events VALUES (1, '2026-01-02 03:04:05')", 'analytics');
-    assert.deepEqual((await d.execute('SELECT at FROM events', 'analytics')).rows, [['2026-01-02 03:04:05.000']]);
+    assert.deepEqual((await d.execute('SELECT at FROM events', 'analytics')).rows, [['2026-01-02 03:04:05']], 'as the server writes it');
 
     await withDriver('postgres', undefined, async (other) => {
       await d.setTxMode('manual');
@@ -467,6 +467,17 @@ test('postgres: an idle session holding a lock or a temp table is kept', { skip 
   } finally {
     await d.close();
   }
+});
+
+test('postgres: dates and times read as the server writes them, so an edit writes them back unchanged', { skip }, async () => {
+  await withDriver('postgres', undefined, async (d) => {
+    await d.execute("SET TimeZone = 'Europe/Paris'", undefined);
+    const r = await d.execute(
+      "SELECT '2026-10-02 10:00:00'::timestamp, '2026-10-02 10:00:00+00'::timestamptz, '2026-10-02'::date, '10:00'::time, ARRAY['2026-10-02'::date, NULL]",
+      undefined,
+    );
+    assert.deepEqual(r.rows[0], ['2026-10-02 10:00:00', '2026-10-02 12:00:00+02', '2026-10-02', '10:00:00', '["2026-10-02",null]']);
+  });
 });
 
 test('ssh: a changed host key refused by the prompt stops the tunnel', { skip }, async () => {

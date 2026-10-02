@@ -1,4 +1,4 @@
-import { Client } from 'pg';
+import { Client, CustomTypesConfig, types as pgTypes } from 'pg';
 import Cursor from 'pg-cursor';
 import { CellValue, ColumnInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
 import { tlsOptions } from './tls';
@@ -7,6 +7,22 @@ import { Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, leadingKeyword
 const FK_ACTIONS: Record<string, string> = { a: 'NO ACTION', r: 'RESTRICT', c: 'CASCADE', n: 'SET NULL', d: 'SET DEFAULT' };
 
 type Row = Record<string, unknown>;
+
+/** date, time, timestamp, timestamptz, timetz; then the same as arrays. */
+const DATE_TIME_OIDS = new Set([1082, 1083, 1114, 1184, 1266]);
+const DATE_TIME_ARRAY_OIDS = new Set([1182, 1183, 1115, 1185, 1270]);
+
+/**
+ * Dates and times as the server writes them (like MySQL's dateStrings): a JS Date would show a
+ * `timestamp` shifted by the machine's offset, and an edited cell would be written back shifted.
+ */
+export const textDates: CustomTypesConfig = {
+  getTypeParser: ((oid: number, format?: 'text' | 'binary') => {
+    if (DATE_TIME_OIDS.has(oid)) return (v: string) => v;
+    if (DATE_TIME_ARRAY_OIDS.has(oid)) return pgTypes.getTypeParser(1009 as never); // text[]: the elements stay text
+    return pgTypes.getTypeParser(oid, format);
+  }) as CustomTypesConfig['getTypeParser'],
+};
 
 /** A per-database session left idle this long is closed, unless it holds state. */
 export const SESSION_IDLE_MS = 10 * 60 * 1000;
@@ -144,6 +160,7 @@ export class PostgresDriver implements SqlDriver {
       ssl: tlsOptions(e),
       connectionTimeoutMillis: 15000,
       application_name: 'DataLodestar',
+      types: textDates,
     });
     await client.connect();
     client.on('error', (err) => {

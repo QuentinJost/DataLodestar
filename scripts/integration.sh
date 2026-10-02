@@ -10,14 +10,15 @@ NET=sqlnav-it
 PW=sqlnav-test-pw
 cleanup() { docker rm -f sqlnav-mysql sqlnav-pg sqlnav-mongo sqlnav-redis sqlnav-ssh >/dev/null 2>&1 || true; docker network rm "$NET" >/dev/null 2>&1 || true; }
 if [ "${KEEP:-}" != 1 ]; then trap cleanup EXIT; fi
-if ! docker inspect sqlnav-ssh >/dev/null 2>&1; then
+# Servers kept by an older version of this script (PostgreSQL without TLS) are recreated.
+if ! docker inspect sqlnav-ssh >/dev/null 2>&1 || ! docker exec sqlnav-pg test -f /var/lib/postgresql/server.crt 2>/dev/null; then
   cleanup
   docker network create "$NET" >/dev/null
   docker run -d --name sqlnav-mysql --network "$NET" -e MYSQL_ROOT_PASSWORD=$PW mysql:8.4 >/dev/null
   # TLS on, with a self-signed certificate for db.internal: not the host the tests dial.
   docker run -d --name sqlnav-pg --network "$NET" -e POSTGRES_PASSWORD=$PW --entrypoint sh postgres:17-alpine -c \
     "apk add --no-cache openssl >/dev/null && cd /var/lib/postgresql && \
-     openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj /CN=db.internal -addext subjectAltName=DNS:db.internal \
+     openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj /CN=db.internal -addext subjectAltName=DNS:db.internal \
        -keyout server.key -out server.crt 2>/dev/null && chown postgres:postgres server.key server.crt && chmod 600 server.key && \
      exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/var/lib/postgresql/server.crt -c ssl_key_file=/var/lib/postgresql/server.key" >/dev/null
   # Transactions need a replica set; with auth, a replica set needs a keyfile.

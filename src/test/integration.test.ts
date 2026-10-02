@@ -270,13 +270,14 @@ test('postgres: a SELECT stopped at maxRows says so: per-row writes stopped with
 test('postgres: a locking SELECT past maxRows still locks every row', { skip }, async () => {
   await withDriver('postgres', undefined, async (d) => {
     await d.execute('DROP TABLE IF EXISTS lock_t', undefined);
-    await d.execute('CREATE TABLE lock_t AS SELECT i FROM generate_series(1, 50) i', undefined);
+    // Two full batches of 10 000 rows, then an empty one: truncation counts every batch.
+    await d.execute('CREATE TABLE lock_t AS SELECT i FROM generate_series(1, 20000) i', undefined);
     try {
       await d.setTxMode('manual');
       const r = await d.execute('SELECT i FROM lock_t ORDER BY i FOR UPDATE', undefined, 10);
       assert.deepEqual([r.rows.length, r.truncated, r.stopped], [10, true, undefined], 'read to the end, not stopped');
       await withDriver('postgres', undefined, async (other) => {
-        await assert.rejects(other.execute('SELECT i FROM lock_t WHERE i = 40 FOR UPDATE NOWAIT', undefined), /could not obtain lock/, 'row 40 is locked too');
+        await assert.rejects(other.execute('SELECT i FROM lock_t WHERE i = 19000 FOR UPDATE NOWAIT', undefined), /could not obtain lock/, 'row 19000 is locked too');
       });
     } finally {
       await d.rollback().catch(() => undefined);

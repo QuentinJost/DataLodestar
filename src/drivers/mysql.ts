@@ -219,7 +219,7 @@ export class MysqlDriver implements SqlDriver {
         // Wait for the KILL so it cannot land on the next statement of the session.
         void Promise.resolve(killing).then(() => {
           if (err && !(truncated && err.errno === ER_QUERY_INTERRUPTED)) reject(err);
-          else resolve(columns ? { columns, rows, truncated, durationMs: 0 } : { columns: [], rows: [], affectedRows, durationMs: 0 });
+          else resolve(columns ? { columns, rows, truncated, ...(err ? { stopped: true } : {}), durationMs: 0 } : { columns: [], rows: [], affectedRows, durationMs: 0 });
         });
       };
       query.on('error', (err: mysql.QueryError) => done(err));

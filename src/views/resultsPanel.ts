@@ -10,6 +10,7 @@ export interface ResultItem {
   affectedRows?: number;
   durationMs?: number;
   truncated?: boolean;
+  stopped?: boolean;
   error?: string;
   documents?: unknown[];
 }

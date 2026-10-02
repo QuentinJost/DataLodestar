@@ -110,6 +110,8 @@ export interface QueryResult {
   /** MongoDB documents as relaxed Extended JSON, for the JSON view. */
   documents?: unknown[];
   truncated?: boolean;
+  /** The server stopped the statement at the row limit: it did not run to the end. */
+  stopped?: boolean;
 }
 
 /** Engine-neutral structure page: tables of facts plus an optional code block. */

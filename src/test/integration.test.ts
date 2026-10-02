@@ -197,6 +197,27 @@ test('postgres: a 2M-row SELECT keeps maxRows rows without buffering the rest', 
   });
 });
 
+test('mysql: a SELECT stopped at maxRows says so, and its writes are rolled back', { skip }, async () => {
+  await withDriver('mysql', 'shop', async (d) => {
+    await d.execute('SET GLOBAL log_bin_trust_function_creators = 1', 'shop');
+    await d.execute('DROP TABLE IF EXISTS side_log', 'shop');
+    await d.execute('CREATE TABLE side_log (i int) ENGINE=InnoDB', 'shop');
+    await d.execute('DROP FUNCTION IF EXISTS log_it', 'shop');
+    await d.execute('CREATE FUNCTION log_it(v int) RETURNS int MODIFIES SQL DATA BEGIN INSERT INTO side_log VALUES (v); RETURN v; END', 'shop');
+    await d.execute('SET SESSION cte_max_recursion_depth = 200000', 'shop');
+    try {
+      const r = await d.execute('WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 100000) SELECT log_it(i) FROM n', 'shop', 1000);
+      assert.equal(r.rows.length, 1000);
+      assert.equal(r.stopped, true, 'KILL QUERY');
+      assert.deepEqual((await d.execute('SELECT count(*) FROM side_log', 'shop')).rows, [[0]], 'InnoDB rolled the statement back');
+      assert.equal((await d.execute('SELECT log_it(1)', 'shop', 1000)).stopped, undefined, 'a statement that ran to the end');
+    } finally {
+      await d.execute('DROP FUNCTION log_it', 'shop');
+      await d.execute('DROP TABLE side_log', 'shop');
+    }
+  });
+});
+
 test('mysql: TLS verification rejects an unknown CA and a wrong name, accepts the right CA and name', { skip }, async () => {
   const { X509Certificate } = await import('crypto');
   const { readFileSync } = await import('fs');
@@ -215,6 +236,25 @@ test('mysql: TLS verification rejects an unknown CA and a wrong name, accepts th
   await assert.rejects(tryConnect({ sslVerify: true, sslCaPath: ca }), /altnames|does not match|Hostname/i, 'host name not in the certificate');
   assert.deepEqual(await tryConnect({ sslVerify: true, sslCaPath: ca, sslServerName: serverCn }), [[1]]);
   assert.deepEqual(await tryConnect({ sslVerify: false }), [[1]], 'opt-out still connects');
+});
+
+test('postgres: a SELECT stopped at maxRows says so: per-row writes stopped with it', { skip }, async () => {
+  await withDriver('postgres', undefined, async (d) => {
+    await d.execute('DROP TABLE IF EXISTS side_log', undefined);
+    await d.execute('CREATE TABLE side_log (i int)', undefined);
+    await d.execute('CREATE OR REPLACE FUNCTION log_it(v int) RETURNS int LANGUAGE sql AS $$ INSERT INTO side_log VALUES (v) RETURNING v $$', undefined);
+    try {
+      const r = await d.execute('SELECT log_it(i) FROM generate_series(1, 5000) i', undefined, 1000);
+      assert.equal(r.rows.length, 1000);
+      assert.equal(r.stopped, true, 'cursor closed');
+      const logged = Number((await d.execute('SELECT count(*) FROM side_log', undefined)).rows[0][0]);
+      assert.ok(logged >= 1000 && logged < 5000, `only the rows read were logged (${logged})`);
+      assert.equal((await d.execute('SELECT log_it(1)', undefined, 1000)).stopped, undefined, 'a statement that ran to the end');
+    } finally {
+      await d.execute('DROP FUNCTION log_it', undefined);
+      await d.execute('DROP TABLE side_log', undefined);
+    }
+  });
 });
 
 test('postgres: TLS checks the certificate name, not the host pg dials', { skip }, async () => {

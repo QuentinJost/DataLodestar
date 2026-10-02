@@ -70,7 +70,9 @@
     if (item.truncated) {
       const w = document.createElement('span');
       w.className = 'warn';
-      w.textContent = `Display limited to ${item.rows.length} rows (dataLodestar.maxRows).`;
+      w.textContent = item.stopped
+        ? `Stopped after ${item.rows.length} rows (dataLodestar.maxRows): the server did not run the statement to the end.`
+        : `Display limited to ${item.rows.length} rows (dataLodestar.maxRows).`;
       status.append(w);
     }
     if (item.documents) {

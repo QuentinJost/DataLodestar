@@ -40,7 +40,11 @@ function readCursor(client: Client, sql: string, maxRows: number): Promise<Query
         if (more && !batch) return step();
         const done = () => {
           const fields = result.fields ?? [];
-          resolve(fields.length ? { columns: fields.map((f) => f.name), rows, truncated: got.length > maxRows, durationMs: 0 } : { columns: [], rows: [], affectedRows: result.rowCount ?? undefined, durationMs: 0 });
+          resolve(
+            fields.length
+              ? { columns: fields.map((f) => f.name), rows, truncated: got.length > maxRows, ...(more ? { stopped: true } : {}), durationMs: 0 }
+              : { columns: [], rows: [], affectedRows: result.rowCount ?? undefined, durationMs: 0 },
+          );
         };
         if (more) cursor.close((closeErr?: Error) => (closeErr ? reject(closeErr) : done()));
         else done();

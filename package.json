@@ -2,7 +2,7 @@
   "name": "datalodestar",
   "displayName": "DataLodestar — MySQL, PostgreSQL, MongoDB & Redis client",
   "description": "Graphical database client for MySQL/MariaDB, PostgreSQL, MongoDB and Redis: browse databases, tables, collections and keys, inspect structure, run queries, SSH tunnels, auto/manual transactions.",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "publisher": "dremsis",
   "author": "dremsis",
   "license": "MIT",
@@ -76,6 +76,12 @@
       {
         "command": "dataLodestar.deleteConnection",
         "title": "Delete Connection",
+        "category": "DataLodestar",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "dataLodestar.dropDatabase",
+        "title": "Delete",
         "category": "DataLodestar",
         "icon": "$(trash)"
       },
@@ -270,6 +276,11 @@
           "command": "dataLodestar.copyName",
           "when": "view == dataLodestar.connections && viewItem =~ /^(database|table|view|collection|column)$/",
           "group": "9_copy@1"
+        },
+        {
+          "command": "dataLodestar.dropDatabase",
+          "when": "view == dataLodestar.connections && viewItem == database",
+          "group": "9_delete@1"
         }
       ],
       "editor/title": [
@@ -305,6 +316,10 @@
         },
         {
           "command": "dataLodestar.copyName",
+          "when": "false"
+        },
+        {
+          "command": "dataLodestar.dropDatabase",
           "when": "false"
         },
         {

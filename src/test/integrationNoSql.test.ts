@@ -128,6 +128,25 @@ test('mongodb: manual transactions on a replica set', { skip }, async () => {
   });
 });
 
+test('mongodb: Delete database drops it, refused while writes of the transaction are pending', { skip }, async () => {
+  await withMongo(async (d) => {
+    const run = shell(d);
+    for (const db of ['dl_drop_a', 'dl_drop_b']) await run('db.t.insertOne({ a: 1 })', db);
+    await d.dropDatabase('dl_drop_a');
+    assert.ok(!(await d.listDatabases(false)).includes('dl_drop_a'));
+
+    await d.setTxMode('manual');
+    await run('db.t.insertOne({ a: 2 })', 'dl_drop_b');
+    await assert.rejects(d.dropDatabase('dl_drop_b'), /Commit or roll back/);
+    assert.equal(d.pendingTransaction, true, 'the refusal keeps the pending changes');
+    assert.ok((await d.listDatabases(false)).includes('dl_drop_b'));
+    await d.rollback();
+    await d.dropDatabase('dl_drop_b');
+    assert.ok(!(await d.listDatabases(false)).includes('dl_drop_b'));
+    await d.setTxMode('auto');
+  });
+});
+
 test('mongodb: connection string without password takes the Password field', { skip }, async () => {
   const uri = `mongodb://root@${env.MONGO_HOST}:27017/?directConnection=true&authSource=admin`;
   const d = new MongoDriver({ ...mongoEndpoint('shop'), uri, user: '' });

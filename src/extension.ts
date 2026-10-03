@@ -92,6 +92,22 @@ export function activate(ctx: vscode.ExtensionContext): void {
     if (!sessions.isConnected(config.id)) await store.remove(config.id);
   });
 
+  register('dataLodestar.dropDatabase', async (node?: NavNode) => {
+    if (!(node instanceof DatabaseNode)) return;
+    const config = store.get(node.connId);
+    if (!config) return;
+    const ok = await vscode.window.showWarningMessage(
+      `Delete database "${node.database}" on "${config.name}"?\nIt is dropped on the server with everything it holds. This cannot be undone.`,
+      { modal: true },
+      'Delete',
+    );
+    if (ok !== 'Delete') return;
+    const d = (await sessions.get(node.connId)).driver;
+    if (d.family === 'redis') return;
+    await d.dropDatabase(node.database);
+    sessions.notifySchemaChange(node.connId);
+  });
+
   register('dataLodestar.connect', async (node?: NavNode) => {
     const id = await targetConnection(node);
     if (id) await sessions.get(id);

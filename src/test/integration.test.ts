@@ -154,6 +154,36 @@ test('mysql: manual transactions, commit, rollback, pending flag', { skip }, asy
   });
 });
 
+test('mysql: Delete database drops it, waits for no lock of our own reads, and is refused while writes are pending', { skip }, async () => {
+  await withDriver('mysql', undefined, async (d) => {
+    for (const db of ['dl_drop_read', 'dl_drop_keep']) {
+      await d.execute(`DROP DATABASE IF EXISTS ${db}`, undefined);
+      await d.execute(`CREATE DATABASE ${db}`, undefined);
+      await d.execute('CREATE TABLE t (id INT PRIMARY KEY)', db);
+    }
+    await d.setTxMode('manual');
+    // The read holds a metadata lock on dl_drop_read.t until the transaction ends.
+    await d.execute('SELECT * FROM t', 'dl_drop_read');
+    await d.dropDatabase('dl_drop_read');
+    assert.ok(!(await d.listDatabases(false)).includes('dl_drop_read'));
+
+    await d.execute('INSERT INTO t VALUES (1)', 'dl_drop_keep');
+    await assert.rejects(d.dropDatabase('dl_drop_keep'), /Commit or roll back the open transaction before deleting "dl_drop_keep"/);
+    assert.equal(d.pendingTransaction, true, 'the refusal keeps the pending changes');
+    assert.ok((await d.listDatabases(false)).includes('dl_drop_keep'));
+    await d.rollback();
+    await d.dropDatabase('dl_drop_keep');
+    assert.ok(!(await d.listDatabases(false)).includes('dl_drop_keep'));
+
+    // The session's current database was dropped: a database of the same name is entered again.
+    await d.setTxMode('auto');
+    await d.execute('CREATE DATABASE dl_drop_keep', undefined);
+    assert.deepEqual((await d.execute('SELECT DATABASE()', 'dl_drop_keep')).rows, [['dl_drop_keep']]);
+    await d.dropDatabase('dl_drop_keep');
+    await assert.rejects(d.dropDatabase('dl_drop_keep'), /database doesn't exist/i, 'a server error comes back as is');
+  });
+});
+
 test('mysql: cancel aborts a running statement', { skip }, async () => {
   await withDriver('mysql', 'shop', async (d) => {
     const started = Date.now();
@@ -424,6 +454,34 @@ test('postgres: databases, schemas, structure, per-database manual transactions'
     await d.cancel();
     await assert.rejects(running, /cancel/i);
     assert.ok(Date.now() - started < 5000);
+  });
+});
+
+test('postgres: Delete database closes our own sessions on it first, never drops the connection database', { skip }, async () => {
+  await withDriver('postgres', undefined, async (d) => {
+    for (const db of ['dl_drop_open', 'dl_drop_keep']) {
+      await d.execute(`DROP DATABASE IF EXISTS ${db}`, undefined);
+      await d.execute(`CREATE DATABASE ${db}`, undefined);
+      await d.execute('CREATE TABLE t (id int PRIMARY KEY)', db);
+    }
+    await d.listTables('dl_drop_open'); // metadata client on it
+    await d.setTxMode('manual');
+    await d.execute('SELECT * FROM t', 'dl_drop_open'); // session client, read-only transaction open
+    await d.dropDatabase('dl_drop_open');
+    assert.ok(!(await d.listDatabases(false)).includes('dl_drop_open'));
+
+    await d.execute('INSERT INTO t VALUES (1)', 'dl_drop_keep');
+    await assert.rejects(d.dropDatabase('dl_drop_keep'), /Commit or roll back the open transaction before deleting "dl_drop_keep"/);
+    assert.equal(d.pendingTransaction, true, 'the refusal keeps the pending changes');
+    assert.deepEqual((await d.execute('SELECT count(*)::int FROM t', 'dl_drop_keep')).rows, [[1]], 'its session still works');
+    await d.rollback();
+    await d.dropDatabase('dl_drop_keep');
+    assert.ok(!(await d.listDatabases(false)).includes('dl_drop_keep'));
+    await d.setTxMode('auto');
+
+    await assert.rejects(d.dropDatabase('postgres'), /"postgres" is the database this connection opens/);
+    await assert.rejects(d.dropDatabase('dl_drop_keep'), /does not exist/, 'a server error comes back as is');
+    assert.ok((await d.listDatabases(true)).includes('postgres'));
   });
 });
 

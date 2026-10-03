@@ -18,8 +18,8 @@ Graphical database client for **VS Code** and **VSCodium**, for **MySQL / MariaD
 ```bash
 npm install
 npm run package                                   # builds datalodestar-<version>.vsix (Node ≥ 22)
-code   --install-extension datalodestar-0.7.1.vsix
-codium --install-extension datalodestar-0.7.1.vsix
+code   --install-extension datalodestar-0.8.0.vsix
+codium --install-extension datalodestar-0.8.0.vsix
 ```
 
 ## Usage
@@ -34,6 +34,9 @@ codium --install-extension datalodestar-0.7.1.vsix
    On MySQL and PostgreSQL tables, cells can be edited in place (see [Editing rows](#editing-rows)).
 4. **New Query** (on a connection, database or table) opens a SQL editor bound to that
    connection and database. The status bar shows the binding; click it to change it.
+5. **Delete** (right-click a database, MySQL / PostgreSQL / MongoDB) drops it on the server
+   after a confirmation, then lists the databases again. It is refused while a manual transaction
+   holds uncommitted changes, and on PostgreSQL for the database the connection opens.
 
 | Shortcut | Action |
 |---|---|

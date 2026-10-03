@@ -94,3 +94,14 @@ test('the end of a transaction with changes re-lists: the tree could not see its
   sessions.emit('c1');
   assert.deepEqual(relisted, ['c1'], 'once');
 });
+
+test('a dropped database leaves the tree when its connection is re-listed', async () => {
+  const { tree, driver, schema, fired, expandAll } = setup();
+  await expandAll();
+  driver.listDatabases = async () => ['crm', 'hr'];
+  schema.fire('c1');
+  const node = fired.at(-1);
+  assert.equal(node?.kind, 'connection', 'the connection node is redrawn, so its database list');
+  const children = await tree.getChildren(node);
+  assert.deepEqual(children.map((c) => c.label), ['crm', 'hr']);
+});

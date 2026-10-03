@@ -63,9 +63,15 @@ export interface SqlDriver extends BaseDriver {
    * savepoint, so they then wait for commit/rollback like any write), else in a transaction of their own.
    */
   updateRows(ref: TableRef, updates: RowUpdate[]): Promise<void>;
+  /** DROP DATABASE, refused while the user's transaction holds uncommitted changes (see pendingChangesError). */
+  dropDatabase(database: string): Promise<void>;
   quoteIdent(name: string): string;
   qualifiedName(ref: TableRef): string;
 }
+
+/** Why a database is not dropped while changes wait for commit/rollback: the drop would commit or lose them. */
+export const pendingChangesError = (database: string) =>
+  new Error(`Commit or roll back the open transaction before deleting "${database}": dropping a database cannot run inside it.`);
 
 /** Savepoint the table viewer's edits run under inside the user's transaction. */
 export const EDIT_SAVEPOINT = 'datalodestar_edit';

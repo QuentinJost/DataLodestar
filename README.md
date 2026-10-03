@@ -197,7 +197,8 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   string is stored without it. Saving is refused if passwords are not saved for that connection, or
   if the user or password holds an unencoded `@`, `/`, `:`, `?` or `#` (write `%40`, `%2F`…): the
   password could not be told apart from the rest of the string.
-  Connections saved by an earlier version are cleaned the same way at startup.
+  Connections saved by an earlier version are cleaned the same way at startup; one whose user or
+  password is not encoded stays as typed and is named in a warning at each startup until edited.
 - The viewer's FILTER / SORT are parsed, never run: only object literals, arrays, strings,
   numbers, booleans, `null`, regular expressions and the helpers listed above are accepted (no
   variables, calls to anything else, member access or template literals), so a pasted filter cannot
@@ -213,12 +214,17 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   `dataLodestar.csvEscapeFormulas`, nor raise `maxRows` or `maxCellChars` past 100000 (bounded on
   read, so a huge value cannot fill the extension host's memory), and the table viewer accepts a
   single condition in WHERE / ORDER BY (no `;` followed by another statement).
+- An error message written by a server (a refused login, a lost connection) is shown in a
+  notification with its markdown links disabled (`[x] (y)`), so a hostile server cannot offer a
+  link that runs a VS Code command.
 - On Linux without a running keyring, VS Code falls back to a weak "basic" encryption and warns about
   it at startup: install a keyring or leave **Save passwords** unchecked.
 - **Use SSL/TLS** verifies the server certificate by default: its chain (against the system CAs, or
   the **CA certificate** file for a private or self-signed CA) and its name (**Certificate name**,
   default the host; set it when the host is an IP or an alias, as is common through an SSH tunnel
-  where the host is often `127.0.0.1` as seen from the SSH server). Unchecking **Verify the
+  where the host is often `127.0.0.1` as seen from the SSH server; for MySQL by IP without a CA
+  file it is required, see below). A connection without the setting (imported, synced) is verified
+  too. Unchecking **Verify the
   server certificate** encrypts without checking, so an attacker on the path can read the password.
   TLS connections saved before 0.5.0 keep working unchecked and are listed in a warning at startup. A
   MongoDB connection string sets its own TLS options (`tls=true`, `tlsCAFile=…`). Every driver

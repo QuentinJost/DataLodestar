@@ -18,8 +18,8 @@ Graphical database client for **VS Code** and **VSCodium**, for **MySQL / MariaD
 ```bash
 npm install
 npm run package                                   # builds datalodestar-<version>.vsix (Node ≥ 22)
-code   --install-extension datalodestar-0.7.1.vsix
-codium --install-extension datalodestar-0.7.1.vsix
+code   --install-extension datalodestar-0.8.0.vsix
+codium --install-extension datalodestar-0.8.0.vsix
 ```
 
 ## Usage

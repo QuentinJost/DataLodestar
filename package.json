@@ -383,7 +383,8 @@
         "dataLodestar.csvEscapeFormulas": {
           "type": "boolean",
           "default": true,
-          "description": "Copy as CSV: quote cells starting with =, +, -, @, tab or CR and prefix them with ' so a spreadsheet does not run them as formulas. Plain numbers such as -1 are left as they are. Double-click copy of a single cell is always raw."
+          "description": "Copy as CSV: quote cells starting with =, +, -, @, tab or CR and prefix them with ' so a spreadsheet does not run them as formulas. Plain numbers such as -1 are left as they are. Double-click copy of a single cell is always raw. User setting only: a workspace cannot turn it off.",
+          "scope": "application"
         },
         "dataLodestar.stopOnError": {
           "type": "boolean",

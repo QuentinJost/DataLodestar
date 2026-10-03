@@ -207,10 +207,10 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   processes). Run only scripts you trust.
 - **Copy as CSV** quotes a cell starting with `=`, `+`, `-`, `@`, tab or CR and prefixes it with
   `'`, so a spreadsheet does not run it as a formula (plain numbers such as `-1` are kept as they
-  are). Set `dataLodestar.csvEscapeFormulas` to `false` for raw output. Double-clicking a cell
-  copies it raw.
-- A workspace's `.vscode/settings.json` cannot turn off `dataLodestar.confirmDestructive`, and the
-  table viewer accepts a single condition in WHERE / ORDER BY (no `;` followed by another statement).
+  are). Set `dataLodestar.csvEscapeFormulas` to `false` in your user settings for raw output.
+  Double-clicking a cell copies it raw.
+- A workspace's `.vscode/settings.json` cannot turn off `dataLodestar.confirmDestructive` or
+  `dataLodestar.csvEscapeFormulas`, and the table viewer accepts a single condition in WHERE / ORDER BY (no `;` followed by another statement).
 - On Linux without a running keyring, VS Code falls back to a weak "basic" encryption and warns about
   it at startup: install a keyring or leave **Save passwords** unchecked.
 - **Use SSL/TLS** verifies the server certificate by default: its chain (against the system CAs, or

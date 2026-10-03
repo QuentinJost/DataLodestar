@@ -2,7 +2,7 @@
   "name": "datalodestar",
   "displayName": "DataLodestar — MySQL, PostgreSQL, MongoDB & Redis client",
   "description": "Graphical database client for MySQL/MariaDB, PostgreSQL, MongoDB and Redis: browse databases, tables, collections and keys, inspect structure, run queries, SSH tunnels, auto/manual transactions.",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "publisher": "dremsis",
   "author": "dremsis",
   "license": "MIT",

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { boundedSetting } from '../limits';
 import { AnyDriver } from '../drivers';
 import { MongoDriver } from '../drivers/mongo';
 import { SessionManager, TxSessions } from '../sessionManager';
@@ -160,7 +161,7 @@ export class TablePanel {
           tab: this.requestedTab,
           pageSize: settings.get<number>('pageSize', 100),
           binaryDisplay: settings.get<string>('binaryDisplay', 'auto'),
-          maxCellChars: settings.get<number>('maxCellChars', 500),
+          maxCellChars: boundedSetting(settings, 'maxCellChars'),
           labels: this.source.labels,
           sortStyle: this.source.sortStyle,
           saving: this.saving,

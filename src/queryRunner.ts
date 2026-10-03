@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { boundedSetting } from './limits';
 import { ConnectionStore } from './connectionStore';
 import { AnyDriver } from './drivers';
 import { leadingKeyword } from './drivers/driver';
@@ -116,7 +117,7 @@ export class QueryRunner {
     const source = sel.isEmpty ? doc.getText() : doc.getText(sel);
     const cursor = sel.isEmpty && scope === 'statement' ? doc.offsetAt(sel.active) : undefined;
     const settings = vscode.workspace.getConfiguration('dataLodestar');
-    const maxRows = settings.get<number>('maxRows', 1000);
+    const maxRows = boundedSetting(settings, 'maxRows');
     const state = { database: binding.database };
 
     let pieces: Piece[];

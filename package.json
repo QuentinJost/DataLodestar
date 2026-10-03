@@ -338,7 +338,8 @@
           "type": "number",
           "default": 1000,
           "minimum": 1,
-          "description": "Maximum number of rows displayed for a query result in the results panel."
+          "maximum": 100000,
+          "description": "Maximum number of rows displayed for a query result in the results panel (at most 100000, whatever a workspace sets)."
         },
         "dataLodestar.pageSize": {
           "type": "number",

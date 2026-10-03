@@ -210,7 +210,9 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   are). Set `dataLodestar.csvEscapeFormulas` to `false` in your user settings for raw output.
   Double-clicking a cell copies it raw.
 - A workspace's `.vscode/settings.json` cannot turn off `dataLodestar.confirmDestructive` or
-  `dataLodestar.csvEscapeFormulas`, and the table viewer accepts a single condition in WHERE / ORDER BY (no `;` followed by another statement).
+  `dataLodestar.csvEscapeFormulas`, nor raise `maxRows` or `maxCellChars` past 100000 (bounded on
+  read, so a huge value cannot fill the extension host's memory), and the table viewer accepts a
+  single condition in WHERE / ORDER BY (no `;` followed by another statement).
 - On Linux without a running keyring, VS Code falls back to a weak "basic" encryption and warns about
   it at startup: install a keyring or leave **Save passwords** unchecked.
 - **Use SSL/TLS** verifies the server certificate by default: its chain (against the system CAs, or
@@ -234,10 +236,10 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
 
 | Setting | Default | |
 |---|---|---|
-| `dataLodestar.maxRows` | 1000 | Rows displayed per query result |
+| `dataLodestar.maxRows` | 1000 | Rows displayed per query result (1 to 100000) |
 | `dataLodestar.csvEscapeFormulas` | true | Copy as CSV neutralises cells a spreadsheet would run as formulas |
 | `dataLodestar.pageSize` | 100 | Default page size of the data viewer |
-| `dataLodestar.maxCellChars` | 500 | Characters shown per grid cell (tooltip: 8× more) |
+| `dataLodestar.maxCellChars` | 500 | Characters shown per grid cell (20 to 100000; tooltip: 8× more) |
 | `dataLodestar.binaryDisplay` | auto | Default format of binary columns |
 | `dataLodestar.stopOnError` | true | Stop a script at the first failing statement |
 | `dataLodestar.confirmDestructive` | true | Confirm destructive statements in auto-commit |

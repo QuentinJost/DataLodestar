@@ -1,5 +1,5 @@
 import { readFileSync } from 'fs';
-import { isIP } from 'net';
+import { connect as netConnect, isIP, Socket } from 'net';
 import { homedir } from 'os';
 import { checkServerIdentity, ConnectionOptions, PeerCertificate } from 'tls';
 import { Endpoint } from './driver';
@@ -35,15 +35,32 @@ export function mongoTlsOptions(e: Endpoint): Record<string, unknown> {
 }
 
 /**
- * mysql2 only checks the name against the host it dials. Any other name (SSH tunnel,
- * IP) comes back in `nameAfterConnect`, to check on the peer certificate once connected.
+ * mysql2 checks the certificate against the `host` it is given, during the TLS handshake, so before
+ * it authenticates: given the certificate name as `host`, it checks that name, and `dial` opens the
+ * socket to the real address (through SSH the tunnel's stream is used instead).
+ *
+ * An IP address cannot be checked that way (mysql2 sends no server name, and Node then checks
+ * "localhost"): it is checked once connected, so only with a CA file, which an attacker cannot get
+ * a certificate from; without one the connection is refused, since the password would be sent first.
  */
-export function mysqlTlsOptions(e: Endpoint, read?: (path: string) => Buffer): { ssl?: { rejectUnauthorized?: boolean; ca?: Buffer; verifyIdentity: boolean }; nameAfterConnect?: string } {
+export function mysqlTlsOptions(
+  e: Endpoint,
+  read?: (path: string) => Buffer,
+): { ssl?: { rejectUnauthorized?: boolean; ca?: Buffer; verifyIdentity: boolean }; host: string; dial?: () => Socket; nameAfterConnect?: string } {
   const tls = tlsOptions(e, read);
-  if (!tls) return {};
-  const byDriver = !!e.sslVerify && !isIP(e.host) && serverName(e) === e.host;
-  return {
-    ssl: { rejectUnauthorized: tls.rejectUnauthorized, ca: tls.ca as Buffer | undefined, verifyIdentity: byDriver },
-    nameAfterConnect: e.sslVerify && !byDriver ? serverName(e) : undefined,
-  };
+  if (!tls) return { host: e.host };
+  const ssl = { rejectUnauthorized: tls.rejectUnauthorized, ca: tls.ca as Buffer | undefined, verifyIdentity: !!e.sslVerify };
+  if (!e.sslVerify) return { ssl, host: e.host };
+  const name = serverName(e);
+  if (isIP(name)) {
+    if (!e.sslCaPath) {
+      throw new Error(
+        `MySQL cannot check a certificate issued to an IP address (${name}) before sending the password. ` +
+          'Set "Certificate name" to a DNS name the certificate carries, or give the CA file that signed it.',
+      );
+    }
+    return { ssl: { ...ssl, verifyIdentity: false }, host: e.host, nameAfterConnect: name };
+  }
+  if (name === e.host) return { ssl, host: e.host };
+  return { ssl, host: name, dial: e.stream ? undefined : () => netConnect(e.port, e.host) };
 }

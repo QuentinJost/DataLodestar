@@ -21,14 +21,14 @@ const withoutCheck = (o: ConnectionOptions | undefined) => {
 test('no SSL: no TLS options for any driver', () => {
   const e = { ...base, ssl: false };
   assert.equal(tlsOptions(e), undefined);
-  assert.deepEqual(mysqlTlsOptions(e), {});
+  assert.deepEqual(mysqlTlsOptions(e), { host: 'db.example.net' });
   assert.deepEqual(mongoTlsOptions(e), {});
 });
 
 test('verification off keeps the old unchecked behaviour', () => {
   const e = { ...base, sslVerify: false };
   assert.deepEqual(tlsOptions(e), { rejectUnauthorized: false });
-  assert.deepEqual(mysqlTlsOptions(e), { ssl: { rejectUnauthorized: false, ca: undefined, verifyIdentity: false }, nameAfterConnect: undefined });
+  assert.deepEqual(mysqlTlsOptions(e), { ssl: { rejectUnauthorized: false, ca: undefined, verifyIdentity: false }, host: 'db.example.net' });
   assert.deepEqual(mongoTlsOptions(e), { tls: true, tlsAllowInvalidCertificates: true });
   assert.deepEqual(tlsOptions({ ...base, sslVerify: undefined }), { rejectUnauthorized: false }, 'undefined = saved before the setting existed');
 });
@@ -49,8 +49,12 @@ test('pg: the certificate name is checked, not the host the driver dials', () =>
 test('through a tunnel the name comes from the config, not 127.0.0.1', () => {
   const tunnelled = { ...base, host: '127.0.0.1', sslServerName: 'db.internal' };
   assert.equal(tlsOptions(tunnelled)!.servername, 'db.internal');
-  assert.deepEqual(mysqlTlsOptions(tunnelled).nameAfterConnect, 'db.internal');
-  assert.equal(mysqlTlsOptions(tunnelled).ssl!.verifyIdentity, false, 'mysql2 would check 127.0.0.1');
+  const stream = async () => null as never;
+  const my = mysqlTlsOptions({ ...tunnelled, stream });
+  assert.equal(my.host, 'db.internal', 'mysql2 checks the name it is given as host, during the handshake');
+  assert.equal(my.ssl!.verifyIdentity, true);
+  assert.equal(my.dial, undefined, 'the tunnel is the stream');
+  assert.equal(my.nameAfterConnect, undefined);
   assert.equal(mongoTlsOptions(tunnelled).servername, 'db.internal');
 });
 
@@ -64,9 +68,22 @@ test('an IP name is checked by checkServerIdentity, never sent as SNI', () => {
   assert.equal(typeof mongoTlsOptions({ ...base, host: '10.0.0.5' }).checkServerIdentity, 'function');
 });
 
-test('mysql: the driver checks the name only when it is the host it dials', () => {
-  assert.deepEqual(mysqlTlsOptions({ ...base, sslCaPath: '/etc/ca.pem' }, read), { ssl: { rejectUnauthorized: true, ca: pem, verifyIdentity: true }, nameAfterConnect: undefined });
-  assert.equal(mysqlTlsOptions({ ...base, host: '10.0.0.5' }).nameAfterConnect, '10.0.0.5');
+test('mysql: the name is checked during the handshake, before the password is sent', () => {
+  assert.deepEqual(mysqlTlsOptions({ ...base, sslCaPath: '/etc/ca.pem' }, read), { ssl: { rejectUnauthorized: true, ca: pem, verifyIdentity: true }, host: 'db.example.net' });
+  // Dialled by IP, certificate named db.internal: mysql2 gets the name, the socket goes to the IP.
+  const byName = mysqlTlsOptions({ ...base, host: '10.0.4.12', sslServerName: 'db.internal' });
+  assert.equal(byName.host, 'db.internal');
+  assert.equal(byName.ssl!.verifyIdentity, true);
+  assert.equal(typeof byName.dial, 'function');
+  assert.equal(byName.nameAfterConnect, undefined);
+});
+
+test('mysql: an IP certificate name is refused without a CA file, checked once connected with one', () => {
+  assert.throws(() => mysqlTlsOptions({ ...base, host: '10.0.4.12' }), /cannot check a certificate issued to an IP address \(10\.0\.4\.12\) before sending the password/);
+  assert.throws(() => mysqlTlsOptions({ ...base, host: 'db.example.net', sslServerName: '10.0.4.12' }), /IP address/);
+  const withCa = mysqlTlsOptions({ ...base, host: '10.0.4.12', sslCaPath: '/etc/ca.pem' }, read);
+  assert.deepEqual(withCa, { ssl: { rejectUnauthorized: true, ca: pem, verifyIdentity: false }, host: '10.0.4.12', nameAfterConnect: '10.0.4.12' });
+  assert.deepEqual(mysqlTlsOptions({ ...base, host: '10.0.4.12', sslVerify: false }).host, '10.0.4.12', 'nothing to check when Verify is off');
 });
 
 test('mongo: CA file passed by path, home directory expanded', () => {

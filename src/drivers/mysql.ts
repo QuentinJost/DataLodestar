@@ -45,11 +45,11 @@ export class MysqlDriver implements SqlDriver {
 
   private async open(): Promise<mysql.Connection> {
     const e = this.endpoint;
-    const { ssl, nameAfterConnect } = mysqlTlsOptions(e);
-    const stream = e.stream ? await e.stream() : undefined;
+    const { ssl, host, dial, nameAfterConnect } = mysqlTlsOptions(e);
+    const stream = e.stream ? await e.stream() : dial?.();
     const conn = await mysql.createConnection({
       stream,
-      host: e.host,
+      host,
       port: e.port,
       user: e.user,
       password: e.password,

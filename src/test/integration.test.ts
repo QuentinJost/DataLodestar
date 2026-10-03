@@ -237,6 +237,19 @@ test('mysql: TLS verification rejects an unknown CA and a wrong name, accepts th
   await assert.rejects(tryConnect({ sslVerify: true, sslCaPath: ca }), /altnames|does not match|Hostname/i, 'host name not in the certificate');
   assert.deepEqual(await tryConnect({ sslVerify: true, sslCaPath: ca, sslServerName: serverCn }), [[1]]);
   assert.deepEqual(await tryConnect({ sslVerify: false }), [[1]], 'opt-out still connects');
+
+  // The name is checked during the handshake: with a wrong password too, the answer is the TLS
+  // refusal, not "Access denied" (which would mean the password went to the server first).
+  await assert.rejects(
+    tryConnect({ sslVerify: true, sslCaPath: ca, sslServerName: 'wrong.example', password: 'not-the-password' }),
+    /does not match certificate's altnames: Host: wrong\.example\./,
+  );
+  // By IP: the name can only be checked once connected, so a CA file is required.
+  const { lookup } = await import('dns/promises');
+  const ip = (await lookup(env.MYSQL_HOST!)).address;
+  await assert.rejects(tryConnect({ host: ip, sslVerify: true }), /cannot check a certificate issued to an IP address/);
+  await assert.rejects(tryConnect({ host: ip, sslVerify: true, sslCaPath: ca }), /altnames|does not match|IP/i, 'the certificate carries no IP');
+  assert.deepEqual(await tryConnect({ host: ip, sslVerify: true, sslCaPath: ca, sslServerName: serverCn }), [[1]], 'dialled by IP, checked by name');
 });
 
 test('postgres: a SELECT stopped at maxRows says so: per-row writes stopped with it', { skip }, async () => {

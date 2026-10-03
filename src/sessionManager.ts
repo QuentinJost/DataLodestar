@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { plainNotice } from './notice';
 import { ConnectionStore } from './connectionStore';
 import { AnyDriver, createDriver } from './drivers';
 import { Endpoint } from './drivers/driver';
@@ -83,7 +84,7 @@ export class SessionManager implements vscode.Disposable {
           this.sessions.delete(id);
           void session.close();
           this.emit(id);
-          void vscode.window.showWarningMessage(`DataLodestar: connection "${config.name}" lost (${reason}).`);
+          void vscode.window.showWarningMessage(`DataLodestar: connection "${config.name}" lost (${plainNotice(reason)}).`);
         };
         driver.onLost = (err) => lost(err.message);
         if (tunnel) tunnel.onClose = () => lost('SSH tunnel closed');

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { plainNotice } from './notice';
 import { ConnectionStore } from './connectionStore';
 import { QueryRunner } from './queryRunner';
 import { SessionManager } from './sessionManager';
@@ -45,7 +46,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
       try {
         await fn(...args);
       } catch (err) {
-        void vscode.window.showErrorMessage(`DataLodestar: ${(err as Error).message || err}`);
+        void vscode.window.showErrorMessage(`DataLodestar: ${plainNotice(String((err as Error).message || err))}`);
       }
     };
 

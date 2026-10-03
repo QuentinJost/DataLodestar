@@ -3,7 +3,7 @@ import Cursor from 'pg-cursor';
 import { CellValue, ColumnInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
 import { applyUpdates, RowUpdate, updateStatement } from '../rowEdit';
 import { tlsOptions } from './tls';
-import { EDIT_SAVEPOINT, Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, leadingKeyword, Mutex, normalizeValue } from './driver';
+import { EDIT_SAVEPOINT, Endpoint, SqlDriver, isReadOnly, pendingChangesError, isTxBegin, isTxControl, leadingKeyword, Mutex, normalizeValue } from './driver';
 
 const FK_ACTIONS: Record<string, string> = { a: 'NO ACTION', r: 'RESTRICT', c: 'CASCADE', n: 'SET NULL', d: 'SET DEFAULT' };
 
@@ -373,6 +373,28 @@ export class PostgresDriver implements SqlDriver {
         throw err;
       }
       if (inTx) this.dirtyTx.add(db);
+    });
+  }
+
+  /**
+   * PostgreSQL refuses to drop a database with open connections, ours included: its clients are
+   * closed first and the DROP runs from the connection's own database, which is therefore never dropped.
+   */
+  dropDatabase(database: string): Promise<void> {
+    return this.lock.run(async () => {
+      if (database === this.defaultDb) {
+        throw new Error(`"${database}" is the database this connection opens: edit the connection to open another one before deleting it.`);
+      }
+      if (this.dirtyTx.has(database)) throw pendingChangesError(database);
+      const own = [this.sessions.get(database), this.metas.get(database)];
+      // Out of the pools first, so their 'error' handler does not report a lost session.
+      this.sessions.delete(database);
+      this.metas.delete(database);
+      this.openTx.delete(database);
+      this.stateful.delete(database);
+      this.lastUsed.delete(database);
+      await Promise.allSettled(own.map((c) => c?.end()));
+      await this.metaQuery(this.defaultDb, `DROP DATABASE ${this.quoteIdent(database)}`);
     });
   }
 

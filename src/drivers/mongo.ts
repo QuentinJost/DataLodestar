@@ -160,6 +160,11 @@ export class MongoDriver implements BaseDriver {
     });
   }
 
+  /** db.dropDatabase(): like any DDL, refused while writes of the transaction are pending. */
+  async dropDatabase(database: string): Promise<void> {
+    await this.runDdl(new MongoOp(database, undefined, 'dropDatabase', []), database, 0);
+  }
+
   /**
    * MongoDB runs index and collection changes outside transactions, and they
    * conflict with a transaction that touched the same collection (the commit

@@ -3,7 +3,7 @@ import { checkServerIdentity, TLSSocket } from 'tls';
 import { CellValue, ColumnInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
 import { applyUpdates, RowUpdate, updateStatement } from '../rowEdit';
 import { mysqlTlsOptions } from './tls';
-import { EDIT_SAVEPOINT, Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, leadingKeyword, Mutex, normalizeValue } from './driver';
+import { EDIT_SAVEPOINT, Endpoint, SqlDriver, isReadOnly, pendingChangesError, isTxBegin, isTxControl, leadingKeyword, Mutex, normalizeValue } from './driver';
 
 const SYSTEM_DATABASES = new Set(['information_schema', 'performance_schema', 'mysql', 'sys']);
 
@@ -288,6 +288,20 @@ export class MysqlDriver implements SqlDriver {
         throw err;
       }
       if (inTx) this.pendingTransaction = true;
+    });
+  }
+
+  /**
+   * On the session connection: in manual mode its reads hold metadata locks until the transaction
+   * ends, which a DROP from another connection would wait on. DROP DATABASE commits implicitly,
+   * so it is refused while writes are pending.
+   */
+  dropDatabase(database: string): Promise<void> {
+    return this.lock.run(async () => {
+      if (this.pendingTransaction) throw pendingChangesError(database);
+      await this.session!.query(`DROP DATABASE ${this.quoteIdent(database)}`);
+      // MySQL leaves no default database once the current one is dropped.
+      if (this.currentDb === database) this.currentDb = undefined;
     });
   }
 

@@ -80,6 +80,12 @@
         "icon": "$(trash)"
       },
       {
+        "command": "dataLodestar.dropDatabase",
+        "title": "Delete",
+        "category": "DataLodestar",
+        "icon": "$(trash)"
+      },
+      {
         "command": "dataLodestar.resetHostKey",
         "title": "Reset Pinned SSH Host Key",
         "category": "DataLodestar"
@@ -270,6 +276,11 @@
           "command": "dataLodestar.copyName",
           "when": "view == dataLodestar.connections && viewItem =~ /^(database|table|view|collection|column)$/",
           "group": "9_copy@1"
+        },
+        {
+          "command": "dataLodestar.dropDatabase",
+          "when": "view == dataLodestar.connections && viewItem == database",
+          "group": "9_delete@1"
         }
       ],
       "editor/title": [
@@ -305,6 +316,10 @@
         },
         {
           "command": "dataLodestar.copyName",
+          "when": "false"
+        },
+        {
+          "command": "dataLodestar.dropDatabase",
           "when": "false"
         },
         {

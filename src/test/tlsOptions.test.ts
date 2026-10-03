@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { ConnectionOptions, PeerCertificate } from 'tls';
 import { Endpoint } from '../drivers/driver';
-import { mongoTlsOptions, mysqlTlsOptions, tlsOptions } from '../drivers/tls';
+import { dialTcp, mongoTlsOptions, mysqlTlsOptions, tlsOptions } from '../drivers/tls';
 
 const base: Endpoint = { host: 'db.example.net', port: 5432, user: 'u', ssl: true, sslVerify: true };
 const pem = Buffer.from('-----BEGIN CERTIFICATE-----');
@@ -21,16 +21,15 @@ const withoutCheck = (o: ConnectionOptions | undefined) => {
 test('no SSL: no TLS options for any driver', () => {
   const e = { ...base, ssl: false };
   assert.equal(tlsOptions(e), undefined);
-  assert.deepEqual(mysqlTlsOptions(e), {});
+  assert.deepEqual(mysqlTlsOptions(e), { host: 'db.example.net' });
   assert.deepEqual(mongoTlsOptions(e), {});
 });
 
 test('verification off keeps the old unchecked behaviour', () => {
   const e = { ...base, sslVerify: false };
   assert.deepEqual(tlsOptions(e), { rejectUnauthorized: false });
-  assert.deepEqual(mysqlTlsOptions(e), { ssl: { rejectUnauthorized: false, ca: undefined, verifyIdentity: false }, nameAfterConnect: undefined });
+  assert.deepEqual(mysqlTlsOptions(e), { ssl: { rejectUnauthorized: false, ca: undefined, verifyIdentity: false }, host: 'db.example.net' });
   assert.deepEqual(mongoTlsOptions(e), { tls: true, tlsAllowInvalidCertificates: true });
-  assert.deepEqual(tlsOptions({ ...base, sslVerify: undefined }), { rejectUnauthorized: false }, 'undefined = saved before the setting existed');
 });
 
 test('pg / redis: verification on checks the chain and the host name, with an optional CA', () => {
@@ -49,8 +48,12 @@ test('pg: the certificate name is checked, not the host the driver dials', () =>
 test('through a tunnel the name comes from the config, not 127.0.0.1', () => {
   const tunnelled = { ...base, host: '127.0.0.1', sslServerName: 'db.internal' };
   assert.equal(tlsOptions(tunnelled)!.servername, 'db.internal');
-  assert.deepEqual(mysqlTlsOptions(tunnelled).nameAfterConnect, 'db.internal');
-  assert.equal(mysqlTlsOptions(tunnelled).ssl!.verifyIdentity, false, 'mysql2 would check 127.0.0.1');
+  const stream = async () => null as never;
+  const my = mysqlTlsOptions({ ...tunnelled, stream });
+  assert.equal(my.host, 'db.internal', 'mysql2 checks the name it is given as host, during the handshake');
+  assert.equal(my.ssl!.verifyIdentity, true);
+  assert.equal(my.dial, undefined, 'the tunnel is the stream');
+  assert.equal(my.nameAfterConnect, undefined);
   assert.equal(mongoTlsOptions(tunnelled).servername, 'db.internal');
 });
 
@@ -64,9 +67,22 @@ test('an IP name is checked by checkServerIdentity, never sent as SNI', () => {
   assert.equal(typeof mongoTlsOptions({ ...base, host: '10.0.0.5' }).checkServerIdentity, 'function');
 });
 
-test('mysql: the driver checks the name only when it is the host it dials', () => {
-  assert.deepEqual(mysqlTlsOptions({ ...base, sslCaPath: '/etc/ca.pem' }, read), { ssl: { rejectUnauthorized: true, ca: pem, verifyIdentity: true }, nameAfterConnect: undefined });
-  assert.equal(mysqlTlsOptions({ ...base, host: '10.0.0.5' }).nameAfterConnect, '10.0.0.5');
+test('mysql: the name is checked during the handshake, before the password is sent', () => {
+  assert.deepEqual(mysqlTlsOptions({ ...base, sslCaPath: '/etc/ca.pem' }, read), { ssl: { rejectUnauthorized: true, ca: pem, verifyIdentity: true }, host: 'db.example.net' });
+  // Dialled by IP, certificate named db.internal: mysql2 gets the name, the socket goes to the IP.
+  const byName = mysqlTlsOptions({ ...base, host: '10.0.4.12', sslServerName: 'db.internal' });
+  assert.equal(byName.host, 'db.internal');
+  assert.equal(byName.ssl!.verifyIdentity, true);
+  assert.equal(typeof byName.dial, 'function');
+  assert.equal(byName.nameAfterConnect, undefined);
+});
+
+test('mysql: an IP certificate name is refused without a CA file, checked once connected with one', () => {
+  assert.throws(() => mysqlTlsOptions({ ...base, host: '10.0.4.12' }), /cannot check a certificate issued to an IP address \(10\.0\.4\.12\) before sending the password/);
+  assert.throws(() => mysqlTlsOptions({ ...base, host: 'db.example.net', sslServerName: '10.0.4.12' }), /IP address/);
+  const withCa = mysqlTlsOptions({ ...base, host: '10.0.4.12', sslCaPath: '/etc/ca.pem' }, read);
+  assert.deepEqual(withCa, { ssl: { rejectUnauthorized: true, ca: pem, verifyIdentity: false }, host: '10.0.4.12', nameAfterConnect: '10.0.4.12' });
+  assert.deepEqual(mysqlTlsOptions({ ...base, host: '10.0.4.12', sslVerify: false }).host, '10.0.4.12', 'nothing to check when Verify is off');
 });
 
 test('mongo: CA file passed by path, home directory expanded', () => {
@@ -75,4 +91,46 @@ test('mongo: CA file passed by path, home directory expanded', () => {
   assert.equal(o.tlsAllowInvalidCertificates, undefined);
   assert.match(String(o.tlsCAFile), /^\/.*\/ca\.pem$/);
   assert.equal(o.servername, 'db.example.net');
+});
+
+test('a TLS connection with no verification setting is verified; the migration sets it on legacy ones', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  require('./vscodeStub').installVscodeStub();
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { endpointFor } = require('../sessionManager') as typeof import('../sessionManager');
+  const config = { id: 'i', name: 'imported', kind: 'mysql', host: 'db.example.net', port: 3306, user: 'u', ssl: true, txMode: 'auto', savePassword: false, showSystemDatabases: false } as const;
+  const imported = endpointFor(config, {});
+  assert.equal(imported.sslVerify, true);
+  assert.equal(tlsOptions(imported)!.rejectUnauthorized, true);
+  assert.equal(endpointFor({ ...config, sslVerify: false }, {}).sslVerify, false, 'an explicit opt-out is kept');
+});
+
+test('mysql: the socket dialled for a certificate name is set up as mysql2 sets up its own', async () => {
+  const net = await import('net');
+  const server = net.createServer((s) => s.end());
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as { port: number };
+  const calls: string[] = [];
+  const proto = net.Socket.prototype;
+  const { setNoDelay, setKeepAlive } = proto;
+  proto.setNoDelay = function (this: InstanceType<typeof net.Socket>, ...a: [boolean?]) {
+    calls.push(`noDelay:${a[0]}`);
+    return setNoDelay.apply(this, a);
+  };
+  proto.setKeepAlive = function (this: InstanceType<typeof net.Socket>, ...a: [boolean?, number?]) {
+    calls.push(`keepAlive:${a[0]}`);
+    return setKeepAlive.apply(this, a);
+  };
+  try {
+    const socket = dialTcp(port, '127.0.0.1')();
+    await new Promise((resolve) => socket.once('connect', resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    socket.destroy();
+  } finally {
+    proto.setNoDelay = setNoDelay;
+    proto.setKeepAlive = setKeepAlive;
+    server.close();
+  }
+  assert.ok(calls.includes('noDelay:true'), 'Nagle off: a large statement is not held back');
+  assert.ok(calls.includes('keepAlive:true'), 'a connection cut by a firewall shows up');
 });

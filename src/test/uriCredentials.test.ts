@@ -27,3 +27,19 @@ test('strings without a password are left alone', () => {
 test('an empty password ("u:@") is removed and reported as none', () => {
   assert.deepEqual(splitUriPassword('mongodb://u:@h/'), { uri: 'mongodb://u@h/', user: 'u', password: undefined });
 });
+
+test('a user or password the driver would refuse unencoded is reported, a clear string is not', () => {
+  const { credentialProblem } = require('../uriCredentials') as typeof import('../uriCredentials');
+  for (const unclear of ['mongodb://u:pa/ss@h/', 'mongodb://admin:Xy/9#k@cluster.example.net/', 'mongodb://u:p@ss@h/', 'mongodb://u:p?w@h/', 'mongodb://a:b:c@h/']) {
+    assert.match(credentialProblem(unclear) ?? '', /not encoded: write @ as %40/, unclear);
+  }
+  for (const clear of [
+    'mongodb://u:p%40ss%2F@h1:27017,h2:27017/db?replicaSet=rs0',
+    'mongodb+srv://ann:s3cret@cluster0.example.net/app?retryWrites=true',
+    'mongodb://u:pw@h/db?authSource=admin&appName=a@b',
+    'mongodb://h1:27017,h2:27018/',
+    'mongodb://u@h/',
+  ]) {
+    assert.equal(credentialProblem(clear), undefined, clear);
+  }
+});

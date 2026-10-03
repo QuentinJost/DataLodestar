@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { ConnectionStore } from '../connectionStore';
 import { connectWith, SessionManager, showChangedHostKey } from '../sessionManager';
 import { ConnectionConfig, ConnectionSecrets } from '../types';
-import { splitUriPassword } from '../uriCredentials';
+import { credentialProblem, splitUriPassword } from '../uriCredentials';
 import { renderPage } from './webview';
 
 const BODY = `
@@ -160,6 +160,11 @@ export class ConnectionForm {
   }
 
   private async test(config: ConnectionConfig, raw: Record<string, string | null>): Promise<void> {
+    const problem = config.uri && credentialProblem(config.uri);
+    if (problem) {
+      this.post({ type: 'testResult', ok: false, message: problem });
+      return;
+    }
     this.liftUriPassword(config, raw);
     const secrets = await this.mergeSecrets(raw);
     try {
@@ -189,6 +194,12 @@ export class ConnectionForm {
   }
 
   private async save(config: ConnectionConfig, raw: Record<string, string | null>): Promise<void> {
+    // The password could not be lifted out of the string, which would be saved with it.
+    const problem = config.uri && credentialProblem(config.uri);
+    if (problem) {
+      this.post({ type: 'testResult', ok: false, message: `${problem} Nothing was saved.` });
+      return;
+    }
     const lifted = this.liftUriPassword(config, raw);
     if (lifted !== undefined && !config.savePassword) {
       this.post({

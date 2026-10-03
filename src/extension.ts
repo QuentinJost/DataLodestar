@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { plainNotice } from './notice';
 import { ConnectionStore } from './connectionStore';
 import { QueryRunner } from './queryRunner';
 import { SessionManager } from './sessionManager';
@@ -45,7 +46,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
       try {
         await fn(...args);
       } catch (err) {
-        void vscode.window.showErrorMessage(`DataLodestar: ${(err as Error).message || err}`);
+        void vscode.window.showErrorMessage(`DataLodestar: ${plainNotice(String((err as Error).message || err))}`);
       }
     };
 
@@ -215,7 +216,13 @@ export function deactivate(): void {
 
 /** One-time rewrites of saved connections, in sequence: each one reads and rewrites the whole list. */
 async function migrate(store: ConnectionStore): Promise<void> {
-  const { moved, dropped } = await store.migrateUriPasswords();
+  const { moved, dropped, unclear } = await store.migrateUriPasswords();
+  if (unclear.length) {
+    void vscode.window.showWarningMessage(
+      `DataLodestar: the connection string of ${unclear.join(', ')} has a user or password with unencoded special characters, ` +
+        'so it is stored as typed. Edit the connection and encode them (@ as %40, / as %2F, : as %3A, ? as %3F, # as %23).',
+    );
+  }
   if (moved.length) {
     void vscode.window.showInformationMessage(`DataLodestar: the password of ${moved.join(', ')} was moved from the connection string to the OS keychain.`);
   }

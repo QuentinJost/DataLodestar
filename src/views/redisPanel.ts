@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { boundedSetting } from '../limits';
 import { SessionManager } from '../sessionManager';
 import { renderPage } from './webview';
 import { OpenSql } from './tablePanel';
@@ -81,7 +82,7 @@ export class RedisPanel {
       case 'ready':
         {
           const settings = vscode.workspace.getConfiguration('dataLodestar');
-          this.post({ type: 'init', binaryDisplay: settings.get<string>('binaryDisplay', 'auto'), maxCellChars: settings.get<number>('maxCellChars', 500) });
+          this.post({ type: 'init', binaryDisplay: settings.get<string>('binaryDisplay', 'auto'), maxCellChars: boundedSetting(settings, 'maxCellChars') });
         }
         break;
       case 'scan':

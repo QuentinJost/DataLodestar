@@ -18,8 +18,8 @@ Graphical database client for **VS Code** and **VSCodium**, for **MySQL / MariaD
 ```bash
 npm install
 npm run package                                   # builds datalodestar-<version>.vsix (Node ≥ 22)
-code   --install-extension datalodestar-0.7.0.vsix
-codium --install-extension datalodestar-0.7.0.vsix
+code   --install-extension datalodestar-0.7.1.vsix
+codium --install-extension datalodestar-0.7.1.vsix
 ```
 
 ## Usage
@@ -194,8 +194,11 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   **Save passwords** is checked; otherwise they are asked at each connection and kept in memory
   until you disconnect. Private keys are never copied, only read from their path when connecting.
 - A password typed inside a MongoDB connection string is moved to the keychain when saving, and the
-  string is stored without it. Saving is refused if passwords are not saved for that connection.
-  Connections saved by an earlier version are cleaned the same way at startup.
+  string is stored without it. Saving is refused if passwords are not saved for that connection, or
+  if the user or password holds an unencoded `@`, `/`, `:`, `?` or `#` (write `%40`, `%2F`…): the
+  password could not be told apart from the rest of the string.
+  Connections saved by an earlier version are cleaned the same way at startup; one whose user or
+  password is not encoded stays as typed and is named in a warning at each startup until edited.
 - The viewer's FILTER / SORT are parsed, never run: only object literals, arrays, strings,
   numbers, booleans, `null`, regular expressions and the helpers listed above are accepted (no
   variables, calls to anything else, member access or template literals), so a pasted filter cannot
@@ -205,21 +208,31 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   processes). Run only scripts you trust.
 - **Copy as CSV** quotes a cell starting with `=`, `+`, `-`, `@`, tab or CR and prefixes it with
   `'`, so a spreadsheet does not run it as a formula (plain numbers such as `-1` are kept as they
-  are). Set `dataLodestar.csvEscapeFormulas` to `false` for raw output. Double-clicking a cell
-  copies it raw.
-- A workspace's `.vscode/settings.json` cannot turn off `dataLodestar.confirmDestructive`, and the
-  table viewer accepts a single condition in WHERE / ORDER BY (no `;` followed by another statement).
+  are). Set `dataLodestar.csvEscapeFormulas` to `false` in your user settings for raw output.
+  Double-clicking a cell copies it raw.
+- A workspace's `.vscode/settings.json` cannot turn off `dataLodestar.confirmDestructive` or
+  `dataLodestar.csvEscapeFormulas`, nor raise `maxRows` or `maxCellChars` past 100000 (bounded on
+  read, so a huge value cannot fill the extension host's memory), and the table viewer accepts a
+  single condition in WHERE / ORDER BY (no `;` followed by another statement).
+- An error message written by a server (a refused login, a lost connection) is shown in a
+  notification with its markdown links disabled (`[x] (y)`), so a hostile server cannot offer a
+  link that runs a VS Code command.
 - On Linux without a running keyring, VS Code falls back to a weak "basic" encryption and warns about
   it at startup: install a keyring or leave **Save passwords** unchecked.
 - **Use SSL/TLS** verifies the server certificate by default: its chain (against the system CAs, or
   the **CA certificate** file for a private or self-signed CA) and its name (**Certificate name**,
   default the host; set it when the host is an IP or an alias, as is common through an SSH tunnel
-  where the host is often `127.0.0.1` as seen from the SSH server). Unchecking **Verify the
+  where the host is often `127.0.0.1` as seen from the SSH server; for MySQL by IP without a CA
+  file it is required, see below). A connection without the setting (imported, synced) is verified
+  too. Unchecking **Verify the
   server certificate** encrypts without checking, so an attacker on the path can read the password.
   TLS connections saved before 0.5.0 keep working unchecked and are listed in a warning at startup. A
-  MongoDB connection string sets its own TLS options (`tls=true`, `tlsCAFile=…`). When the
-  certificate name is not the host (or the host is an IP), MySQL checks it right after the
-  handshake rather than during it.
+  MongoDB connection string sets its own TLS options (`tls=true`, `tlsCAFile=…`). Every driver
+  checks the name during the TLS handshake, before the password is sent, except for a MySQL
+  certificate issued to an IP address: MySQL can only check that one once connected. It is then
+  refused without the **CA certificate** file; with it, only a certificate from that CA can receive
+  the password before the name is checked (another server it signed, if compromised, could). Prefer
+  a DNS **Certificate name** the certificate carries: it is checked before the password is sent.
 - Through an SSH tunnel, MySQL, PostgreSQL and Redis talk to the server over SSH channels: no port
   is opened on this machine. MongoDB's driver can only dial an address, so it gets a Unix socket in
   a directory only you can open (removed on disconnect); on Windows it is a `127.0.0.1` port, which
@@ -229,10 +242,10 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
 
 | Setting | Default | |
 |---|---|---|
-| `dataLodestar.maxRows` | 1000 | Rows displayed per query result |
+| `dataLodestar.maxRows` | 1000 | Rows displayed per query result (1 to 100000) |
 | `dataLodestar.csvEscapeFormulas` | true | Copy as CSV neutralises cells a spreadsheet would run as formulas |
 | `dataLodestar.pageSize` | 100 | Default page size of the data viewer |
-| `dataLodestar.maxCellChars` | 500 | Characters shown per grid cell (tooltip: 8× more) |
+| `dataLodestar.maxCellChars` | 500 | Characters shown per grid cell (20 to 100000; tooltip: 8× more) |
 | `dataLodestar.binaryDisplay` | auto | Default format of binary columns |
 | `dataLodestar.stopOnError` | true | Stop a script at the first failing statement |
 | `dataLodestar.confirmDestructive` | true | Confirm destructive statements in auto-commit |

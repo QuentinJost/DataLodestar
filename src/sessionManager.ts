@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { plainNotice } from './notice';
 import { ConnectionStore } from './connectionStore';
 import { AnyDriver, createDriver } from './drivers';
 import { Endpoint } from './drivers/driver';
@@ -83,7 +84,7 @@ export class SessionManager implements vscode.Disposable {
           this.sessions.delete(id);
           void session.close();
           this.emit(id);
-          void vscode.window.showWarningMessage(`DataLodestar: connection "${config.name}" lost (${reason}).`);
+          void vscode.window.showWarningMessage(`DataLodestar: connection "${config.name}" lost (${plainNotice(reason)}).`);
         };
         driver.onLost = (err) => lost(err.message);
         if (tunnel) tunnel.onClose = () => lost('SSH tunnel closed');
@@ -223,6 +224,25 @@ export class SessionManager implements vscode.Disposable {
 /** What a panel needs from the sessions for its Commit / Rollback bar. */
 export type TxSessions = Pick<SessionManager, 'onDidChange' | 'txState'>;
 
+/** Where and how to connect, before any tunnel: the config and its secrets as the drivers take them. */
+export function endpointFor(config: ConnectionConfig, secrets: ConnectionSecrets): Endpoint {
+  return {
+    host: config.host,
+    port: config.port,
+    user: config.user,
+    password: secrets.password,
+    database: config.database,
+    ssl: config.ssl,
+    // Unset only for a config not seen by the startup migration (import, sync): verified, as promised.
+    sslVerify: config.sslVerify ?? true,
+    sslCaPath: config.sslCaPath || undefined,
+    // Kept when a tunnel replaces the host (MongoDB): the certificate names the real server.
+    sslServerName: config.sslServerName || config.host,
+    uri: config.uri || undefined,
+    authSource: config.authSource || undefined,
+  };
+}
+
 /** Opens tunnel + driver for a config; used by sessions and by the "Test" button. */
 export async function connectWith(
   config: ConnectionConfig,
@@ -231,20 +251,7 @@ export async function connectWith(
 ): Promise<{ driver: AnyDriver; tunnel?: SshTunnel }> {
   let tunnel: SshTunnel | undefined;
   let driver: AnyDriver | undefined;
-  const endpoint: Endpoint = {
-    host: config.host,
-    port: config.port,
-    user: config.user,
-    password: secrets.password,
-    database: config.database,
-    ssl: config.ssl,
-    sslVerify: config.sslVerify ?? false,
-    sslCaPath: config.sslCaPath || undefined,
-    // Kept when a tunnel replaces the host (MongoDB): the certificate names the real server.
-    sslServerName: config.sslServerName || config.host,
-    uri: config.uri || undefined,
-    authSource: config.authSource || undefined,
-  };
+  const endpoint = endpointFor(config, secrets);
   try {
     if (config.ssh?.enabled && endpoint.uri) {
       throw new Error('A connection string cannot go through the SSH tunnel: clear it and use host / port.');

@@ -34,3 +34,21 @@ function decode(s: string): string {
     return s;
   }
 }
+
+/** How the MongoDB driver (mongodb-connection-string-url) splits a string: user info up to the first "@". */
+const DRIVER_SPLIT = /^mongodb(?:\+srv)?:\/\/(?:([^:@]*)(?::([^@]*))?@)?([^/?@]*)(.*)$/i;
+/** Characters the driver refuses unencoded in a user or password. */
+const UNENCODED = /[:/?#[\]@]/;
+
+/**
+ * Why the user or password of `uri` cannot be told apart from the rest, as the driver would refuse it
+ * (`/`, `?`, `#`, `:` or `@` unencoded); splitPassword would then miss the password, or part of it,
+ * and the string would be saved with it. Undefined when the string is clear.
+ */
+export function credentialProblem(uri: string): string | undefined {
+  const m = DRIVER_SPLIT.exec(uri);
+  if (!m) return undefined;
+  const [, user, password, , rest] = m;
+  if (!UNENCODED.test(user ?? '') && !UNENCODED.test(password ?? '') && !rest.startsWith('@')) return undefined;
+  return 'The user or password of the connection string has special characters that are not encoded: write @ as %40, / as %2F, : as %3A, ? as %3F, # as %23.';
+}

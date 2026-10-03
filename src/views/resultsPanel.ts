@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { boundedSetting } from '../limits';
 import { TxSessions } from '../sessionManager';
 import { CellValue } from '../types';
 import { renderPage } from './webview';
@@ -90,7 +91,7 @@ export class ResultsPanel {
     const settings = vscode.workspace.getConfiguration('dataLodestar');
     const binaryDisplay = settings.get<string>('binaryDisplay', 'auto');
     const csvEscapeFormulas = settings.get<boolean>('csvEscapeFormulas', true);
-    const maxCellChars = settings.get<number>('maxCellChars', 500);
+    const maxCellChars = boundedSetting(settings, 'maxCellChars');
     void this.panel?.webview.postMessage({ type: 'results', items, binaryDisplay, csvEscapeFormulas, maxCellChars, restored });
     this.postTx();
   }

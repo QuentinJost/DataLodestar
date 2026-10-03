@@ -6,18 +6,20 @@ Graphical database client for **VS Code** and **VSCodium**, for **MySQL / MariaD
 - Browse every database of a host, its tables and views (or collections, or keys), and their columns
 - Inspect a table's structure: columns, indexes, foreign keys, DDL
 - Browse table data with a **WHERE** and an **ORDER BY** field, paging and on-demand row count
+- Edit **MySQL / PostgreSQL** cells in place, then save every change at once, all or nothing
 - Show binary columns as **UUID**, hex, text or Base64
 - Write and run queries from any `.sql` editor, with results in a side panel
 - Connect directly or through an **SSH tunnel** (password, private key or agent)
-- Choose per host between **auto-commit** and **manual transactions** (commit / rollback)
+- Choose per host between **auto-commit** and **manual transactions**, with a **Commit / Rollback**
+  bar wherever changes wait
 
 ## Install
 
 ```bash
 npm install
 npm run package                                   # builds datalodestar-<version>.vsix (Node ≥ 22)
-code   --install-extension datalodestar-0.4.0.vsix
-codium --install-extension datalodestar-0.4.0.vsix
+code   --install-extension datalodestar-0.7.0.vsix
+codium --install-extension datalodestar-0.7.0.vsix
 ```
 
 ## Usage
@@ -29,6 +31,7 @@ codium --install-extension datalodestar-0.4.0.vsix
    and/or **ORDER BY** (`created_at DESC`), then press Enter. Clicking a column header cycles
    ASC → DESC → unsorted. **Count rows** runs a `COUNT(*)` with the current WHERE.
    The **Structure** tab shows columns, indexes, foreign keys and the DDL.
+   On MySQL and PostgreSQL tables, cells can be edited in place (see [Editing rows](#editing-rows)).
 4. **New Query** (on a connection, database or table) opens a SQL editor bound to that
    connection and database. The status bar shows the binding; click it to change it.
 
@@ -111,6 +114,34 @@ remembered per table and applies to copied cells and CSV. Only display changes, 
 filter by a UUID, write it in WHERE, e.g. `id = UUID_TO_BIN('9c3b6d8e-…', 1)` (MySQL 8) or
 `id = decode(replace('9c3b6d8e-…', '-', ''), 'hex')` (PostgreSQL). Values over 4 KB are cut for
 display and show their full size.
+
+## Editing rows
+
+In the table viewer of a MySQL or PostgreSQL table, double-click a cell (or select it and press
+`Enter` / `F2`) to edit it: `Enter` keeps the text, `Shift+Enter` adds a line, `Escape` cancels.
+**Set NULL** and **Revert cell** act on the selected cell. Edited cells stay highlighted until
+**Save** writes them or **Discard** drops them: across pages, sorts and reloads, and after the
+viewer is closed (the next viewer opened on that table starts from them, until VS Code quits).
+
+- **Save** sends one `UPDATE … WHERE <key>` per row, all or nothing. If a row fails (a constraint, a
+  type, a key that matches no row any more because it changed since it was read), nothing is kept
+  and the error names the row. On MySQL without a strict `sql_mode`, a value MySQL would truncate
+  or zero only raises a warning: the save fails on it too, instead of storing something else.
+- In auto-commit mode the save commits on its own. In a manual transaction (or after a typed
+  `BEGIN`) it runs under a savepoint and then waits for **Commit** / **Rollback** like any other
+  write; a failed save leaves your earlier writes as they were. If the server rolls the whole
+  transaction back during the save (a MySQL deadlock), the message says so.
+- A save that ends while the viewer is hidden is reported when it is shown again.
+- Rows are found by the primary key, else by the shortest unique index over `NOT NULL` columns.
+  Views, and tables with neither, are read-only (the status line says why).
+- Values are sent as text and converted by the server (`true`, `2026-10-02 10:00`, JSON…). Dates
+  and times show as the server writes them (PostgreSQL in the session's `TimeZone`, with its
+  offset), so an edited one is written back as shown.
+- Not editable: binary columns (a binary key works), arrays, `interval` and geometry types (shown
+  as JSON, which the server does not take back), generated columns and `GENERATED ALWAYS`
+  identities. Double-clicking such a cell copies it; `Ctrl+C` / `Cmd+C` copies the selected cell.
+- There is no check against changes made by others since the page was read: an edited column
+  overwrites what another session wrote there meanwhile.
 
 ## Transactions
 
@@ -219,10 +250,13 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   writes, say) may then have run for only some of the rows on PostgreSQL, and is rolled back with
   the statement on MySQL (InnoDB). Raise `maxRows`, or aggregate (`SELECT count(f(id)) FROM t`), to
   run it whole. `EXPLAIN ANALYZE` always runs to the end.
-- Cells are read-only; edit data with `UPDATE` statements.
+- Cells are editable in the table viewer of MySQL and PostgreSQL tables only (see
+  [Editing rows](#editing-rows)); query results and MongoDB / Redis data are read-only. Rows cannot
+  be added or deleted from the grid.
 - A result of more than 50 rows draws only the rows in view, one line each (a line break shows as
-  `↵`); hover a cell for its full value, double-click to copy it. Column widths are set from the
-  first screen and a sample of the rest, so a longer value further down is cut with `…`.
+  `↵`); hover a cell for its full value, double-click to copy it (or edit it, see above). Column
+  widths are set from the first screen and a sample of the rest, so a longer value further down is
+  cut with `…`.
 - The tree keeps what it listed (databases, tables, collections, columns) until **Refresh**, a
   disconnect, a `CREATE` / `DROP` / `ALTER` / `RENAME` (or a MongoDB DDL method) run from the
   editor, or the commit or rollback of pending changes. Objects created another way, or Redis key

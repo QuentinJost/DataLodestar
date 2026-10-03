@@ -4,7 +4,8 @@ import * as assert from 'node:assert/strict';
 import { createDriver } from '../drivers';
 import { SqlDriver } from '../drivers/driver';
 import { SshTunnel } from '../sshTunnel';
-import { DbKind } from '../types';
+import { DbKind, TableRef } from '../types';
+import { editability, EditInfo, RowEditError, toUpdates } from '../rowEdit';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { format } = require('../../media/binaryFormat.js');
@@ -376,7 +377,7 @@ test('postgres: databases, schemas, structure, per-database manual transactions'
     assert.deepEqual(bin.rows[0][0], { b: 'deadbeef', n: 4 });
     assert.equal(format(bin.rows[0][1], 'uuid'), UUID);
     await d.execute("INSERT INTO events VALUES (1, '2026-01-02 03:04:05')", 'analytics');
-    assert.deepEqual((await d.execute('SELECT at FROM events', 'analytics')).rows, [['2026-01-02 03:04:05.000']]);
+    assert.deepEqual((await d.execute('SELECT at FROM events', 'analytics')).rows, [['2026-01-02 03:04:05']], 'as the server writes it');
 
     await withDriver('postgres', undefined, async (other) => {
       await d.setTxMode('manual');
@@ -467,6 +468,185 @@ test('postgres: an idle session holding a lock or a temp table is kept', { skip 
   } finally {
     await d.close();
   }
+});
+
+/** The table viewer's save path on a table keyed by raw bytes, through every transaction state. */
+for (const kind of ['mysql', 'postgres'] as DbKind[]) {
+  test(`${kind}: table viewer edits are all or nothing, and wait for commit inside a transaction`, { skip }, async () => {
+    const my = kind === 'mysql';
+    const database = my ? 'shop' : 'postgres';
+    const ref: TableRef = { database, schema: my ? undefined : 'public', name: 'edit_rows', type: 'table' };
+    await withDriver(kind, database, async (d) => {
+      await withDriver(kind, database, async (other) => {
+        const q = d.qualifiedName(ref);
+        const names = async (conn: SqlDriver) => (await conn.execute(`SELECT name FROM ${q} ORDER BY n`, database)).rows.map((r) => r[0]);
+        await d.execute(`DROP TABLE IF EXISTS ${q}`, database);
+        try {
+          await d.execute(
+            `CREATE TABLE ${q} (id ${my ? 'BINARY(16)' : 'bytea'} PRIMARY KEY, n INT NOT NULL UNIQUE, name VARCHAR(20), price DECIMAL(10,2))`,
+            database,
+          );
+          await d.execute(`INSERT INTO ${q} (id, n, name, price) VALUES (${my ? "UNHEX('00ff')" : "'\\x00ff'"}, 1, 'a', 1.50), (${my ? "UNHEX('0a0b')" : "'\\x0a0b'"}, 2, 'b', NULL)`, database);
+          const e = editability(ref, await d.describeTable(ref));
+          assert.ok(e.editable);
+          assert.deepEqual(e.key, ['id']);
+          // Keys as the grid got them: binary cells.
+          const keys = (await d.execute(`SELECT id FROM ${q} ORDER BY n`, database)).rows.map((r) => r[0]);
+          const save = (changes: Record<string, string | null>[]) =>
+            d.updateRows(ref, toUpdates(e as EditInfo, changes.map((c, i) => ({ key: [keys[i]], changes: c }))));
+
+          // Auto-commit: applied at once, a value written the same as read still matches its row.
+          await save([{ name: 'A', price: '1.5' }, { name: null }]);
+          assert.equal(d.pendingTransaction, false);
+          assert.deepEqual(await names(other), ['A', null]);
+
+          // The second row fails (n must be unique): the first one is undone too.
+          await assert.rejects(save([{ name: 'kept?' }, { n: '1' }]), (err: RowEditError) => err.index === 1 && /Row id = 0x0a0b(00)*:/.test(err.message));
+          assert.deepEqual(await names(other), ['A', null]);
+          assert.equal(d.pendingTransaction, false);
+
+          // A key that matches nothing any more.
+          await assert.rejects(
+            d.updateRows(ref, toUpdates(e as EditInfo, [{ key: [{ b: '1234', n: 2 }], changes: { name: 'x' } }])),
+            /no row has this key any more/,
+          );
+
+          // Manual mode: the edits join the user's transaction; a failed save leaves the user's own write.
+          await d.setTxMode('manual');
+          await d.execute(`UPDATE ${q} SET name = 'typed' WHERE n = 2`, database);
+          await assert.rejects(save([{ name: 'lost' }, { n: '1' }]));
+          assert.equal(d.pendingTransaction, true);
+          assert.deepEqual(await names(d), ['A', 'typed'], 'rolled back to the savepoint, not further');
+          await save([{ name: 'B' }]);
+          assert.deepEqual(await names(other), ['A', null], 'not visible before commit');
+          await d.commit();
+          assert.deepEqual(await names(other), ['B', 'typed']);
+          await save([{ name: 'C' }]);
+          assert.equal(d.pendingTransaction, true, 'an edit alone makes the transaction pending');
+          await d.rollback();
+          assert.deepEqual(await names(other), ['B', 'typed']);
+
+          // A BEGIN typed in auto mode: the save must not commit it.
+          await d.setTxMode('auto');
+          await d.execute('BEGIN', database);
+          await save([{ name: 'D' }]);
+          assert.equal(d.pendingTransaction, true);
+          await d.rollback();
+          assert.deepEqual(await names(other), ['B', 'typed']);
+        } finally {
+          await d.setTxMode('auto');
+          await d.execute(`DROP TABLE IF EXISTS ${q}`, database);
+        }
+      });
+    });
+  });
+}
+
+/** A MySQL table for the save checks below, dropped afterwards; `fn` gets the save and a reader on another session. */
+async function withMysqlEditTable(fn: (d: SqlDriver, other: SqlDriver, save: (changes: Record<string, string | null>[]) => Promise<void>, names: () => Promise<unknown[]>) => Promise<void>) {
+  const ref: TableRef = { database: 'shop', name: 'edit_checks', type: 'table' };
+  await withDriver('mysql', 'shop', async (d) => {
+    await withDriver('mysql', 'shop', async (other) => {
+      const q = d.qualifiedName(ref);
+      await d.execute(`DROP TABLE IF EXISTS ${q}`, 'shop');
+      try {
+        await d.execute(`CREATE TABLE ${q} (id INT PRIMARY KEY, n INT NOT NULL UNIQUE, name VARCHAR(20))`, 'shop');
+        await d.execute(`INSERT INTO ${q} VALUES (1, 1, 'a'), (2, 2, 'b')`, 'shop');
+        const e = editability(ref, await d.describeTable(ref)) as EditInfo;
+        const save = (changes: Record<string, string | null>[]) => d.updateRows(ref, toUpdates(e, changes.map((c, i) => ({ key: [i + 1], changes: c }))));
+        const names = async () => (await other.execute(`SELECT name FROM ${q} ORDER BY id`, 'shop')).rows.map((r) => r[0]);
+        await fn(d, other, save, names);
+      } finally {
+        await d.setTxMode('auto');
+        await d.execute(`DROP TABLE IF EXISTS ${q}`, 'shop');
+      }
+    });
+  });
+}
+
+test('mysql: a BIGINT key past 2^53 finds its own row, not a neighbour equal as a double', { skip }, async () => {
+  const ref: TableRef = { database: 'shop', name: 'edit_bigint', type: 'table' };
+  await withDriver('mysql', 'shop', async (d) => {
+    const q = d.qualifiedName(ref);
+    await d.execute(`DROP TABLE IF EXISTS ${q}`, 'shop');
+    try {
+      await d.execute(`CREATE TABLE ${q} (id BIGINT PRIMARY KEY, name VARCHAR(20))`, 'shop');
+      await d.execute(`INSERT INTO ${q} VALUES (9007199254740992, 'low'), (9007199254740993, 'high')`, 'shop');
+      const e = editability(ref, await d.describeTable(ref)) as EditInfo;
+      const key = (await d.execute(`SELECT id FROM ${q} WHERE name = 'high'`, 'shop')).rows[0][0];
+      assert.equal(key, '9007199254740993', 'read as text');
+      await d.updateRows(ref, toUpdates(e, [{ key: [key], changes: { name: 'edited' } }]));
+      assert.deepEqual((await d.execute(`SELECT name FROM ${q} ORDER BY id`, 'shop')).rows, [['low'], ['edited']]);
+    } finally {
+      await d.execute(`DROP TABLE IF EXISTS ${q}`, 'shop');
+    }
+  });
+});
+
+test('mysql: without a strict sql_mode, a value MySQL would truncate fails the save instead', { skip }, async () => {
+  await withMysqlEditTable(async (d, _other, save, names) => {
+    await d.execute("SET SESSION sql_mode = ''", 'shop');
+    await assert.rejects(save([{ name: 'x'.repeat(30) }]), (err: RowEditError) => err.index === 0 && /Row id = 1: Data truncated for column 'name'/.test(err.message));
+    assert.deepEqual(await names(), ['a', 'b']);
+    await save([{ name: 'fits' }]);
+    assert.deepEqual(await names(), ['fits', 'b']);
+  });
+});
+
+test('mysql: a BEGIN implicitly committed since (DDL) does not make a save half-done', { skip }, async () => {
+  await withMysqlEditTable(async (d, _other, save, names) => {
+    await d.execute('BEGIN', 'shop');
+    await d.execute('CREATE TABLE IF NOT EXISTS edit_checks_ddl (i INT)', 'shop'); // commits the BEGIN
+    try {
+      assert.equal(d.pendingTransaction, true, 'what the extension believes');
+      await assert.rejects(save([{ name: 'kept?' }, { n: '1' }]), (err: RowEditError) => err.index === 1);
+      assert.deepEqual(await names(), ['a', 'b'], 'the first row is undone too');
+      assert.equal(d.pendingTransaction, false);
+      await save([{ name: 'A' }]);
+      assert.equal(d.pendingTransaction, false, 'committed on its own');
+      assert.deepEqual(await names(), ['A', 'b']);
+    } finally {
+      await d.execute('DROP TABLE IF EXISTS edit_checks_ddl', 'shop');
+    }
+  });
+});
+
+test('mysql: a deadlock during a save says the whole transaction was rolled back', { skip }, async () => {
+  await withMysqlEditTable(async (d, other, save, names) => {
+    await d.setTxMode('manual');
+    await d.execute("UPDATE edit_checks SET name = 'mine' WHERE id = 2", 'shop'); // d locks row 2
+    await other.setTxMode('manual');
+    // other locks row 1 and writes more: InnoDB picks the lighter transaction, d's, as the victim.
+    await other.execute("UPDATE edit_checks SET name = 'theirs' WHERE id = 1", 'shop');
+    await other.execute("INSERT INTO edit_checks VALUES (10, 10, 'x'), (11, 11, 'x'), (12, 12, 'x'), (13, 13, 'x')", 'shop');
+    const saving = save([{ name: 'edited' }]); // waits for row 1
+    await new Promise((r) => setTimeout(r, 300));
+    const blocked = other.execute("UPDATE edit_checks SET name = 'theirs' WHERE id = 2", 'shop'); // waits for row 2: deadlock
+    try {
+      await assert.rejects(saving, /Row id = 1: Deadlock found.* The server rolled back the whole transaction, earlier changes included\./);
+      assert.equal(d.pendingTransaction, false, 'nothing is left to commit');
+      await blocked;
+      await other.commit();
+      assert.deepEqual((await names()).slice(0, 2), ['theirs', 'theirs'], "d's own write went with the rollback");
+    } finally {
+      // Whatever failed, free both sessions' locks: the table is dropped next.
+      await d.rollback().catch(() => undefined);
+      await Promise.allSettled([saving, blocked]);
+      await other.rollback().catch(() => undefined);
+      await other.setTxMode('auto');
+    }
+  });
+});
+
+test('postgres: dates and times read as the server writes them, so an edit writes them back unchanged', { skip }, async () => {
+  await withDriver('postgres', undefined, async (d) => {
+    await d.execute("SET TimeZone = 'Europe/Paris'", undefined);
+    const r = await d.execute(
+      "SELECT '2026-10-02 10:00:00'::timestamp, '2026-10-02 10:00:00+00'::timestamptz, '2026-10-02'::date, '10:00'::time, ARRAY['2026-10-02'::date, NULL]",
+      undefined,
+    );
+    assert.deepEqual(r.rows[0], ['2026-10-02 10:00:00', '2026-10-02 12:00:00+02', '2026-10-02', '10:00:00', '["2026-10-02",null]']);
+  });
 });
 
 test('ssh: a changed host key refused by the prompt stops the tunnel', { skip }, async () => {

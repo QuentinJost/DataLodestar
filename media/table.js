@@ -9,6 +9,8 @@
     limit: saved.limit || 100,
     offset: saved.offset || 0,
     binaryModes: saved.binaryModes || {},
+    /** Unsaved edits, by row key (JSON): { key, changes: { column: text | null } }. Kept across pages and reloads. */
+    edits: saved.edits || {},
   };
   let binaryDefault = 'auto';
   let maxCell;
@@ -17,6 +19,12 @@
   let lastData = null;
   let structureLoaded = false;
   let txPending = false;
+  /** { editable, key, columns } or { editable: false, reason }, from the extension; null until then. */
+  let editInfo = null;
+  /** Grid of the current page ({ refresh }) and the cell selected in it. */
+  let grid = null;
+  let selectedCell = null;
+  let saving = false;
 
   const where = $('where');
   const orderBy = $('orderBy');
@@ -24,6 +32,12 @@
 
   function persist() {
     vscode.setState(state);
+  }
+
+  /** After a change of `state.edits`: the extension keeps them too, for a viewer reopened on this table. */
+  function persistEdits() {
+    persist();
+    vscode.postMessage({ type: 'draft', edits: state.edits });
   }
 
   function showTab(tab) {
@@ -80,7 +94,85 @@
     return column ? { column, dir } : null;
   }
 
+  /** Positions of the key columns in the page, or null when the page cannot be edited. */
+  function keyIndexes(columns) {
+    if (!editInfo || !editInfo.editable) return null;
+    const idx = editInfo.key.map((k) => columns.indexOf(k));
+    return idx.every((i) => i >= 0) ? idx : null;
+  }
+
+  const rowId = (keys, row) => JSON.stringify(keys.map((i) => row[i]));
+
+  /** Same as what was read: the change is dropped rather than saved. */
+  const sameAsRead = (read, text) => (read === null ? text === null : text !== null && String(read) === text);
+
+  /** The grid's editing callbacks for the page `msg`, or undefined when it is read-only. */
+  function editOptions(msg) {
+    const keys = keyIndexes(msg.columns);
+    if (!keys || msg.documents) return undefined;
+    const columnInfo = (c) => editInfo.columns[msg.columns[c]];
+    return {
+      can: (r, c) => !saving && !!(columnInfo(c) && columnInfo(c).editable) && !SqlBinary.isBinary(msg.rows[r][c]),
+      value: (r, c) => {
+        const e = state.edits[rowId(keys, msg.rows[r])];
+        const column = msg.columns[c];
+        return e && Object.prototype.hasOwnProperty.call(e.changes, column) ? { value: e.changes[column] } : undefined;
+      },
+      // Bound to this page: a page that arrives while a cell is being edited is another set of rows.
+      onChange: (r, c, text) => setCell(msg, r, c, text),
+    };
+  }
+
+  /** Records `text` (or null, or undefined to undo) as the new value of a cell of the page `data`. */
+  function setCell(data, r, c, text) {
+    const keys = keyIndexes(data.columns);
+    const row = data.rows[r];
+    const id = rowId(keys, row);
+    const column = data.columns[c];
+    const entry = state.edits[id] || { key: keys.map((i) => row[i]), changes: {} };
+    if (text === undefined || sameAsRead(row[c], text)) delete entry.changes[column];
+    else entry.changes[column] = text;
+    if (Object.keys(entry.changes).length) state.edits[id] = entry;
+    else delete state.edits[id];
+    persistEdits();
+    updateEditBar();
+  }
+
+  function updateEditBar() {
+    const entries = Object.values(state.edits);
+    const cells = entries.reduce((n, e) => n + Object.keys(e.changes).length, 0);
+    $('editbar').classList.toggle('hidden', cells === 0);
+    $('editCount').textContent = `${cells} unsaved change${cells === 1 ? '' : 's'} in ${entries.length} row${entries.length === 1 ? '' : 's'}`;
+    $('saveEdits').disabled = saving;
+    $('discardEdits').disabled = saving;
+    $('saveEdits').textContent = saving ? 'Saving…' : 'Save';
+    updateCellButtons();
+  }
+
+  /** Set NULL / Revert cell act on the selected cell of the current page. */
+  function updateCellButtons() {
+    const opts = lastData && editOptions(lastData);
+    $('setNull').classList.toggle('hidden', !opts);
+    $('revertCell').classList.toggle('hidden', !opts);
+    if (!opts) return;
+    const at = selectedCell && selectedCell.data === lastData ? selectedCell : null;
+    const column = at && editInfo.columns[lastData.columns[at.c]];
+    $('setNull').disabled = !at || !opts.can(at.r, at.c) || !column.nullable;
+    $('revertCell').disabled = !at || saving || !opts.value(at.r, at.c);
+  }
+
+  function updateEditHint() {
+    const hint = $('editHint');
+    if (!editInfo || (lastData && lastData.documents)) hint.textContent = '';
+    else if (!editInfo.editable) hint.textContent = `Read-only: ${editInfo.reason}`;
+    else if (lastData && !keyIndexes(lastData.columns)) hint.textContent = 'Read-only: the key columns are not in the page';
+    else hint.textContent = 'Double-click a cell (or Enter) to edit it';
+  }
+
   function renderData(msg) {
+    // An open cell editor belongs to the page being replaced: its text goes to that page's row.
+    const open = document.querySelector('textarea.cell-editor');
+    if (open) open.blur();
     if (msg.documents && !msg.rows.length) msg.rows = SqlMongoRows.rowsFromDocuments(msg.columns, msg.documents);
     lastData = msg;
     $('apply').disabled = false;
@@ -100,7 +192,9 @@
       $('grid').replaceChildren(pre);
       return;
     }
-    SqlGrid.render($('grid'), msg.columns, msg.rows, {
+    selectedCell = null;
+    updateEditHint();
+    grid = SqlGrid.render($('grid'), msg.columns, msg.rows, {
       offset: state.offset,
       sort: parseSort(),
       onSort: (c) => sortBy(c, msg.quoted[c] || c),
@@ -114,7 +208,13 @@
         persist();
         renderData(lastData);
       },
+      edit: editOptions(msg),
+      onSelect: (r, c) => {
+        selectedCell = { data: msg, r, c };
+        updateCellButtons();
+      },
     });
+    updateEditBar();
   }
 
   function cellTable(headers, rows) {
@@ -200,6 +300,32 @@
     persist();
     if (lastData) renderData(lastData);
   });
+  $('setNull').addEventListener('click', () => {
+    if (!selectedCell) return;
+    if (selectedCell.data !== lastData) return;
+    setCell(selectedCell.data, selectedCell.r, selectedCell.c, null);
+    grid.refresh(selectedCell.r);
+  });
+  $('revertCell').addEventListener('click', () => {
+    if (!selectedCell) return;
+    if (selectedCell.data !== lastData) return;
+    setCell(selectedCell.data, selectedCell.r, selectedCell.c, undefined);
+    grid.refresh(selectedCell.r);
+  });
+  $('saveEdits').addEventListener('click', () => {
+    const edits = Object.values(state.edits);
+    if (!edits.length || saving) return;
+    saving = true;
+    $('dataError').classList.add('hidden');
+    updateEditBar();
+    vscode.postMessage({ type: 'save', edits });
+  });
+  $('discardEdits').addEventListener('click', () => {
+    state.edits = {};
+    persistEdits();
+    updateEditBar();
+    if (grid) grid.refresh();
+  });
   $('refreshStructure').addEventListener('click', () => {
     structureLoaded = false;
     showTab('structure');
@@ -210,6 +336,10 @@
     switch (msg.type) {
       case 'init':
         if (!saved.limit) state.limit = msg.pageSize;
+        // Reloaded while a save runs: its outcome comes once it ends.
+        saving = !!msg.saving;
+        // A new viewer on a table whose last viewer closed with unsaved edits.
+        if (!saved.edits && msg.edits) state.edits = msg.edits;
         binaryDefault = msg.binaryDisplay || 'auto';
         maxCell = msg.maxCellChars;
         sortStyle = msg.sortStyle || 'sql';
@@ -238,6 +368,29 @@
         $('apply').disabled = false;
         $('info').textContent = '';
         $('dataError').textContent = msg.message;
+        $('dataError').classList.remove('hidden');
+        break;
+      case 'editing':
+        editInfo = msg;
+        // Edits kept from an earlier page load, for a table that turned read-only, cannot be saved.
+        if (!msg.editable && Object.keys(state.edits).length) {
+          state.edits = {};
+          persistEdits();
+        }
+        if (lastData) renderData(lastData);
+        else updateEditBar();
+        break;
+      case 'saved':
+        saving = false;
+        state.edits = {};
+        persistEdits();
+        updateEditBar();
+        request();
+        break;
+      case 'saveError':
+        saving = false;
+        updateEditBar();
+        $('dataError').textContent = `Nothing was saved. ${msg.message}`;
         $('dataError').classList.remove('hidden');
         break;
       case 'count':

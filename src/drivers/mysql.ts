@@ -1,8 +1,9 @@
 import * as mysql from 'mysql2/promise';
 import { checkServerIdentity, TLSSocket } from 'tls';
 import { CellValue, ColumnInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TableRef, TableStructure, TxMode } from '../types';
+import { applyUpdates, RowUpdate, updateStatement } from '../rowEdit';
 import { mysqlTlsOptions } from './tls';
-import { Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, leadingKeyword, Mutex, normalizeValue } from './driver';
+import { EDIT_SAVEPOINT, Endpoint, SqlDriver, isReadOnly, isTxBegin, isTxControl, leadingKeyword, Mutex, normalizeValue } from './driver';
 
 const SYSTEM_DATABASES = new Set(['information_schema', 'performance_schema', 'mysql', 'sys']);
 
@@ -15,6 +16,10 @@ interface CoreConnection {
 
 /** "Query execution was interrupted": the answer to our own KILL QUERY. */
 const ER_QUERY_INTERRUPTED = 1317;
+/** OK packet status bit: a transaction is open on the server. */
+const SERVER_STATUS_IN_TRANS = 0x0001;
+/** "SAVEPOINT … does not exist": the transaction holding it was rolled back (deadlock, lock wait timeout). */
+const ER_SP_DOES_NOT_EXIST = 1305;
 
 export class MysqlDriver implements SqlDriver {
   readonly kind = 'mysql' as const;
@@ -230,6 +235,60 @@ export class MysqlDriver implements SqlDriver {
   private trackTransaction(sql: string): void {
     if (isTxControl(sql)) this.pendingTransaction = false;
     else if (isTxBegin(sql) || (this.mode === 'manual' && !isReadOnly(sql))) this.pendingTransaction = true;
+  }
+
+  updateRows(ref: TableRef, updates: RowUpdate[]): Promise<void> {
+    return this.lock.run(async () => {
+      const conn = this.session!;
+      // A transaction is open in manual mode (autocommit off) or after a BEGIN typed in auto mode;
+      // START TRANSACTION there would commit it.
+      let inTx = this.mode === 'manual' || this.pendingTransaction;
+      if (inTx) {
+        const [header] = await conn.query(`SAVEPOINT ${EDIT_SAVEPOINT}`);
+        // No transaction holds the savepoint, so it would undo nothing: in manual mode none has started
+        // yet (a SAVEPOINT does not start one), so start it; after a typed BEGIN, it was implicitly
+        // committed since (DDL, LOCK TABLES, SET autocommit = 1), so the save goes on its own.
+        if (!((header as mysql.ResultSetHeader).serverStatus & SERVER_STATUS_IN_TRANS)) {
+          if (this.mode === 'manual') {
+            await conn.query('START TRANSACTION');
+            await conn.query(`SAVEPOINT ${EDIT_SAVEPOINT}`);
+          } else {
+            inTx = false;
+            this.pendingTransaction = false;
+          }
+        }
+      }
+      if (!inTx) await conn.query('START TRANSACTION');
+      try {
+        await applyUpdates(
+          updates,
+          (u) => updateStatement(this.qualifiedName(ref), u, (n) => this.quoteIdent(n), () => '?'),
+          async (sql, params) => {
+            const header = (await conn.query(sql, params))[0] as mysql.ResultSetHeader;
+            // Without a strict sql_mode, MySQL stores a truncated or zeroed value and only warns.
+            if (header.warningStatus > 0) {
+              const [warnings] = await conn.query('SHOW WARNINGS');
+              throw new Error((warnings as Row[]).map((w) => String(w.Message)).join('; '));
+            }
+            // FOUND_ROWS (a mysql2 default): rows matched, even those already holding the value.
+            return header.affectedRows;
+          },
+        );
+        await conn.query(inTx ? `RELEASE SAVEPOINT ${EDIT_SAVEPOINT}` : 'COMMIT');
+      } catch (err) {
+        try {
+          await conn.query(inTx ? `ROLLBACK TO SAVEPOINT ${EDIT_SAVEPOINT}` : 'ROLLBACK');
+        } catch (undo) {
+          // A deadlock rolled the whole transaction back, the user's own writes included.
+          if ((undo as mysql.QueryError).errno === ER_SP_DOES_NOT_EXIST) {
+            this.pendingTransaction = false;
+            throw new Error(`${(err as Error).message} The server rolled back the whole transaction, earlier changes included.`);
+          }
+        }
+        throw err;
+      }
+      if (inTx) this.pendingTransaction = true;
+    });
   }
 
   async cancel(): Promise<void> {

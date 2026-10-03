@@ -4,6 +4,7 @@ import { MongoDriver } from '../drivers/mongo';
 import { SessionManager, TxSessions } from '../sessionManager';
 import { CellValue, CollectionInfo, CollectionStructure, StructureView, TableRef, TableStructure } from '../types';
 import { assertSingleStatement } from '../sqlSplitter';
+import { Editability, EditInfo, editability, RowEditError, toUpdates } from '../rowEdit';
 import { renderPage } from './webview';
 
 type Tab = 'data' | 'structure';
@@ -36,6 +37,10 @@ export interface DataSource {
   load(where: string, orderBy: string, limit: number, offset: number): Promise<DataPage>;
   count(where: string): Promise<number>;
   structure(): Promise<StructureView>;
+  /** Absent: the viewer is read-only (MongoDB). */
+  editing?(): Promise<Editability>;
+  /** Applies the webview's edits (see RowEdit), all or none. */
+  save?(edits: unknown): Promise<void>;
 }
 
 const BODY = `
@@ -62,8 +67,15 @@ const BODY = `
       <span id="countValue"></span>
       <button id="openQuery" class="secondary" title="Open the generated query in an editor">Open as query</button>
       <button id="viewMode" class="secondary hidden" title="Switch between grid and JSON">JSON</button>
+      <button id="setNull" class="secondary hidden" title="Set the selected cell to NULL" disabled>Set NULL</button>
+      <button id="revertCell" class="secondary hidden" title="Undo the change of the selected cell" disabled>Revert cell</button>
     </div>
-    <div class="status"><span id="info"></span><code id="sql"></code></div>
+    <div id="editbar" class="editbar hidden" role="status" aria-live="polite">
+      <span id="editCount"></span>
+      <button id="saveEdits">Save</button>
+      <button id="discardEdits" class="secondary">Discard</button>
+    </div>
+    <div class="status"><span id="info"></span><span id="editHint" class="hint"></span><code id="sql"></code></div>
     <div id="dataError" class="error-box hidden"></div>
     <div id="grid" class="scroll"></div>
   </div>
@@ -73,9 +85,13 @@ const BODY = `
   </div>
 </div>`;
 
+type SaveOutcome = { type: 'saved' } | { type: 'saveError'; message: string; index?: number };
+
 /** Data browser (filter / sort / paging) and structure view for a table or a collection. */
 export class TablePanel {
   private static readonly open = new Map<string, TablePanel>();
+  /** Unsaved edits per table, kept when its viewer closes and given back to the next one (until VS Code quits). */
+  private static readonly drafts = new Map<string, Record<string, unknown>>();
 
   static show(extensionUri: vscode.Uri, sessions: TxSessions, openSql: OpenSql, connId: string, source: DataSource, tab: Tab): void {
     const existing = TablePanel.open.get(source.key);
@@ -92,6 +108,12 @@ export class TablePanel {
   private readonly panel: vscode.WebviewPanel;
   /** Tab to open on the next 'ready': the initial one, then any asked while hidden. */
   private requestedTab?: Tab;
+  /** False from hiding (the page is gone) to its next 'ready'. */
+  private ready = false;
+  /** A save is running: a page reloaded meanwhile shows "Saving…". */
+  private saving = false;
+  /** Outcome of a save that ended while the page was hidden: sent on its next 'ready'. */
+  private saveOutcome?: SaveOutcome;
 
   private constructor(
     extensionUri: vscode.Uri,
@@ -111,6 +133,10 @@ export class TablePanel {
     this.panel.webview.html = renderPage(this.panel.webview, extensionUri, source.title, BODY, ['txBar.js', 'table.js']);
     this.panel.webview.onDidReceiveMessage((msg) => this.onMessage(msg));
     const txChanges = sessions.onDidChange((id) => id === connId && this.postTx());
+    // Not retained: a hidden page is gone, so the outcome of a save waits for its next 'ready'.
+    this.panel.onDidChangeViewState((e) => {
+      if (!e.webviewPanel.visible) this.ready = false;
+    });
     this.panel.onDidDispose(() => {
       TablePanel.open.delete(source.key);
       txChanges.dispose();
@@ -137,10 +163,45 @@ export class TablePanel {
           maxCellChars: settings.get<number>('maxCellChars', 500),
           labels: this.source.labels,
           sortStyle: this.source.sortStyle,
+          saving: this.saving,
+          edits: TablePanel.drafts.get(this.source.key),
         });
+        this.ready = true;
+        if (this.saveOutcome) {
+          this.post(this.saveOutcome);
+          this.saveOutcome = undefined;
+        }
         this.requestedTab = undefined;
         this.postTx();
+        if (this.source.editing) {
+          // After 'init': the rows can show before the structure is read.
+          this.source.editing().then(
+            (e) => this.post({ type: 'editing', ...e }),
+            (err) => this.post({ type: 'editing', editable: false, reason: (err as Error).message }),
+          );
+        }
         break;
+      case 'draft':
+        if (msg.edits && typeof msg.edits === 'object' && Object.keys(msg.edits).length) TablePanel.drafts.set(this.source.key, msg.edits as Record<string, unknown>);
+        else TablePanel.drafts.delete(this.source.key);
+        break;
+      case 'save': {
+        let outcome: SaveOutcome;
+        this.saving = true;
+        try {
+          if (!this.source.save) throw new Error('This viewer is read-only.');
+          await this.source.save(msg.edits);
+          outcome = { type: 'saved' };
+        } catch (err) {
+          outcome = { type: 'saveError', message: (err as Error).message, index: err instanceof RowEditError ? err.index : undefined };
+        } finally {
+          this.saving = false;
+        }
+        if (this.ready) this.post(outcome);
+        else this.saveOutcome = outcome;
+        this.postTx();
+        break;
+      }
       case 'load': {
         const limit = Math.max(1, Math.min(10000, Math.floor(Number(msg.limit)) || 100));
         const offset = Math.max(0, Math.floor(Number(msg.offset)) || 0);
@@ -191,6 +252,15 @@ export function sqlSource(sessions: SessionManager, connId: string, connName: st
     if (d.family !== 'sql') throw new Error('Not a SQL connection.');
     return d;
   };
+  let editInfo: Promise<Editability> | undefined;
+  const editing = () => {
+    editInfo ??= driver()
+      .then((d) => d.describeTable(table))
+      .then((st) => editability(table, st));
+    // Read again next time if it failed (connection lost, privileges): not a lasting answer.
+    editInfo.catch(() => (editInfo = undefined));
+    return editInfo;
+  };
   return {
     key: `${connId}|${table.database}|${table.schema ?? ''}|${table.name}`,
     title: `${label} — ${table.database}`,
@@ -226,6 +296,17 @@ export function sqlSource(sessions: SessionManager, connId: string, connName: st
     },
     async structure() {
       return sqlStructureView(await (await driver()).describeTable(table));
+    },
+    editing,
+    async save(edits) {
+      const e = await editing();
+      if (!e.editable) throw new Error(`This table cannot be edited: ${e.reason}.`);
+      const updates = toUpdates(e as EditInfo, edits);
+      try {
+        await (await driver()).updateRows(table, updates);
+      } finally {
+        sessions.emit(connId);
+      }
     },
   };
 }

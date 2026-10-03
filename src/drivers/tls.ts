@@ -34,6 +34,14 @@ export function mongoTlsOptions(e: Endpoint): Record<string, unknown> {
   return { tls: true, ...(e.sslCaPath ? { tlsCAFile: expandHome(e.sslCaPath) } : {}), ...(servername ? { servername } : { checkServerIdentity: check }) };
 }
 
+/** The socket mysql2 opens itself (base/connection.js): no Nagle delay, keep-alive once connected. */
+export const dialTcp = (port: number, host: string) => (): Socket => {
+  const socket = netConnect(port, host);
+  socket.setNoDelay(true);
+  socket.once('connect', () => socket.setKeepAlive(true));
+  return socket;
+};
+
 /**
  * mysql2 checks the certificate against the `host` it is given, during the TLS handshake, so before
  * it authenticates: given the certificate name as `host`, it checks that name, and `dial` opens the
@@ -62,5 +70,5 @@ export function mysqlTlsOptions(
     return { ssl: { ...ssl, verifyIdentity: false }, host: e.host, nameAfterConnect: name };
   }
   if (name === e.host) return { ssl, host: e.host };
-  return { ssl, host: name, dial: e.stream ? undefined : () => netConnect(e.port, e.host) };
+  return { ssl, host: name, dial: e.stream ? undefined : dialTcp(e.port, e.host) };
 }

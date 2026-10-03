@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { ConnectionOptions, PeerCertificate } from 'tls';
 import { Endpoint } from '../drivers/driver';
-import { mongoTlsOptions, mysqlTlsOptions, tlsOptions } from '../drivers/tls';
+import { dialTcp, mongoTlsOptions, mysqlTlsOptions, tlsOptions } from '../drivers/tls';
 
 const base: Endpoint = { host: 'db.example.net', port: 5432, user: 'u', ssl: true, sslVerify: true };
 const pem = Buffer.from('-----BEGIN CERTIFICATE-----');
@@ -103,4 +103,34 @@ test('a TLS connection with no verification setting is verified; the migration s
   assert.equal(imported.sslVerify, true);
   assert.equal(tlsOptions(imported)!.rejectUnauthorized, true);
   assert.equal(endpointFor({ ...config, sslVerify: false }, {}).sslVerify, false, 'an explicit opt-out is kept');
+});
+
+test('mysql: the socket dialled for a certificate name is set up as mysql2 sets up its own', async () => {
+  const net = await import('net');
+  const server = net.createServer((s) => s.end());
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as { port: number };
+  const calls: string[] = [];
+  const proto = net.Socket.prototype;
+  const { setNoDelay, setKeepAlive } = proto;
+  proto.setNoDelay = function (this: InstanceType<typeof net.Socket>, ...a: [boolean?]) {
+    calls.push(`noDelay:${a[0]}`);
+    return setNoDelay.apply(this, a);
+  };
+  proto.setKeepAlive = function (this: InstanceType<typeof net.Socket>, ...a: [boolean?, number?]) {
+    calls.push(`keepAlive:${a[0]}`);
+    return setKeepAlive.apply(this, a);
+  };
+  try {
+    const socket = dialTcp(port, '127.0.0.1')();
+    await new Promise((resolve) => socket.once('connect', resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    socket.destroy();
+  } finally {
+    proto.setNoDelay = setNoDelay;
+    proto.setKeepAlive = setKeepAlive;
+    server.close();
+  }
+  assert.ok(calls.includes('noDelay:true'), 'Nagle off: a large statement is not held back');
+  assert.ok(calls.includes('keepAlive:true'), 'a connection cut by a firewall shows up');
 });

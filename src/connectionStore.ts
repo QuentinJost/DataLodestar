@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ConnectionConfig, ConnectionSecrets } from './types';
-import { splitUriPassword } from './uriCredentials';
+import { credentialProblem, splitUriPassword } from './uriCredentials';
 
 const CONFIGS_KEY = 'dataLodestar.connections';
 const secretKey = (id: string) => `dataLodestar.secrets.${id}`;
@@ -44,11 +44,17 @@ export class ConnectionStore {
    * connection string, in clear. Moves it to the keychain (or drops it when the
    * connection does not save passwords). Returns the names of the cleaned connections.
    */
-  async migrateUriPasswords(): Promise<{ moved: string[]; dropped: string[] }> {
+  async migrateUriPasswords(): Promise<{ moved: string[]; dropped: string[]; unclear: string[] }> {
     const moved: string[] = [];
     const dropped: string[] = [];
+    /** Saved before the check: the password cannot be told apart, so it stays; the user must edit it. */
+    const unclear: string[] = [];
     for (const config of this.list()) {
       if (!config.uri) continue;
+      if (credentialProblem(config.uri)) {
+        unclear.push(config.name);
+        continue;
+      }
       const split = splitUriPassword(config.uri);
       if (split.password === undefined) continue;
       const cleaned = { ...config, uri: split.uri };
@@ -61,7 +67,7 @@ export class ConnectionStore {
         dropped.push(config.name);
       }
     }
-    return { moved, dropped };
+    return { moved, dropped, unclear };
   }
 
   /**

@@ -32,3 +32,20 @@ test('TLS migration: only connections using TLS are kept unchecked', async () =>
   );
   assert.deepEqual(await store.migrateTlsVerify(), [], 'runs once');
 });
+
+test('URI migration: a password that cannot be told apart is left as typed and reported', async () => {
+  const base = { kind: 'mongodb', host: 'h', port: 27017, user: '', txMode: 'auto', savePassword: true, showSystemDatabases: false, ssl: false };
+  const store = new ConnectionStore(
+    context([
+      { ...base, id: 'clear', name: 'clear', uri: 'mongodb://u:pw@h/' },
+      { ...base, id: 'unclear', name: 'unclear', uri: 'mongodb://u:p@ss@h/' },
+    ]) as never,
+  );
+  const result = await store.migrateUriPasswords();
+  assert.deepEqual(result, { moved: ['clear'], dropped: [], unclear: ['unclear'] });
+  assert.deepEqual(
+    store.list().map((c) => c.uri),
+    ['mongodb://u@h/', 'mongodb://u:p@ss@h/'],
+    'not split into "p" with "ss" left in the string',
+  );
+});

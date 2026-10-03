@@ -194,7 +194,9 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   **Save passwords** is checked; otherwise they are asked at each connection and kept in memory
   until you disconnect. Private keys are never copied, only read from their path when connecting.
 - A password typed inside a MongoDB connection string is moved to the keychain when saving, and the
-  string is stored without it. Saving is refused if passwords are not saved for that connection.
+  string is stored without it. Saving is refused if passwords are not saved for that connection, or
+  if the user or password holds an unencoded `@`, `/`, `:`, `?` or `#` (write `%40`, `%2F`…): the
+  password could not be told apart from the rest of the string.
   Connections saved by an earlier version are cleaned the same way at startup.
 - The viewer's FILTER / SORT are parsed, never run: only object literals, arrays, strings,
   numbers, booleans, `null`, regular expressions and the helpers listed above are accepted (no

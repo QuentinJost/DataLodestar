@@ -249,3 +249,24 @@ test('table: unsaved edits outlive a closed viewer and come back in the next one
   again.dispose();
   assert.equal(sent(open('t7'), 'init').at(-1)!.edits, undefined);
 });
+
+test('connection form: a string whose password cannot be told apart is neither saved nor tried', async () => {
+  const { ConnectionForm } = require('../views/connectionForm') as typeof import('../views/connectionForm');
+  const saved: unknown[] = [];
+  const store = { save: async (...args: unknown[]) => void saved.push(args), getSecrets: async () => ({}) };
+  ConnectionForm.show(extensionUri, store as never, { isConnected: () => false } as never);
+  const panel = panels.at(-1)!;
+  const config = { name: 'm', kind: 'mongodb', host: '', port: 27017, user: '', uri: 'mongodb://admin:Xy/9#k@cluster.example.net/', ssl: false, txMode: 'auto', savePassword: true, showSystemDatabases: false };
+  panel.fromPage({ type: 'save', config, secrets: {} });
+  await settle();
+  assert.equal(saved.length, 0, 'nothing written to the settings');
+  assert.match(String(sent(panel, 'testResult').at(-1)!.message), /not encoded: write @ as %40.* Nothing was saved\./);
+  panel.fromPage({ type: 'test', config, secrets: {} });
+  await settle();
+  assert.equal(sent(panel, 'testResult').length, 2);
+  assert.doesNotMatch(String(sent(panel, 'testResult').at(-1)!.message), /Nothing was saved/);
+  panel.fromPage({ type: 'save', config: { ...config, uri: 'mongodb://admin:Xy%2F9%23k@cluster.example.net/' }, secrets: {} });
+  await settle();
+  assert.equal(saved.length, 1, 'once encoded, it is saved');
+  assert.equal((saved[0] as [{ uri: string }])[0].uri, 'mongodb://admin@cluster.example.net/', 'without its password');
+});

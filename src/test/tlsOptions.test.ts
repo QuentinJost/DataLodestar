@@ -30,7 +30,6 @@ test('verification off keeps the old unchecked behaviour', () => {
   assert.deepEqual(tlsOptions(e), { rejectUnauthorized: false });
   assert.deepEqual(mysqlTlsOptions(e), { ssl: { rejectUnauthorized: false, ca: undefined, verifyIdentity: false }, host: 'db.example.net' });
   assert.deepEqual(mongoTlsOptions(e), { tls: true, tlsAllowInvalidCertificates: true });
-  assert.deepEqual(tlsOptions({ ...base, sslVerify: undefined }), { rejectUnauthorized: false }, 'undefined = saved before the setting existed');
 });
 
 test('pg / redis: verification on checks the chain and the host name, with an optional CA', () => {
@@ -92,4 +91,16 @@ test('mongo: CA file passed by path, home directory expanded', () => {
   assert.equal(o.tlsAllowInvalidCertificates, undefined);
   assert.match(String(o.tlsCAFile), /^\/.*\/ca\.pem$/);
   assert.equal(o.servername, 'db.example.net');
+});
+
+test('a TLS connection with no verification setting is verified; the migration sets it on legacy ones', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  require('./vscodeStub').installVscodeStub();
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { endpointFor } = require('../sessionManager') as typeof import('../sessionManager');
+  const config = { id: 'i', name: 'imported', kind: 'mysql', host: 'db.example.net', port: 3306, user: 'u', ssl: true, txMode: 'auto', savePassword: false, showSystemDatabases: false } as const;
+  const imported = endpointFor(config, {});
+  assert.equal(imported.sslVerify, true);
+  assert.equal(tlsOptions(imported)!.rejectUnauthorized, true);
+  assert.equal(endpointFor({ ...config, sslVerify: false }, {}).sslVerify, false, 'an explicit opt-out is kept');
 });

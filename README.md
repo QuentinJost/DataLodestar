@@ -221,9 +221,10 @@ The **SSH agent** option uses `SSH_AUTH_SOCK`.
   TLS connections saved before 0.5.0 keep working unchecked and are listed in a warning at startup. A
   MongoDB connection string sets its own TLS options (`tls=true`, `tlsCAFile=…`). Every driver
   checks the name during the TLS handshake, before the password is sent, except for a MySQL
-  certificate issued to an IP address: MySQL can only check that one once connected, so it needs
-  the **CA certificate** file (an attacker cannot get a certificate from it), and is refused
-  without one; set **Certificate name** to a DNS name the certificate carries instead.
+  certificate issued to an IP address: MySQL can only check that one once connected. It is then
+  refused without the **CA certificate** file; with it, only a certificate from that CA can receive
+  the password before the name is checked (another server it signed, if compromised, could). Prefer
+  a DNS **Certificate name** the certificate carries: it is checked before the password is sent.
 - Through an SSH tunnel, MySQL, PostgreSQL and Redis talk to the server over SSH channels: no port
   is opened on this machine. MongoDB's driver can only dial an address, so it gets a Unix socket in
   a directory only you can open (removed on disconnect); on Windows it is a `127.0.0.1` port, which

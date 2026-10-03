@@ -48,8 +48,8 @@ export const dialTcp = (port: number, host: string) => (): Socket => {
  * socket to the real address (through SSH the tunnel's stream is used instead).
  *
  * An IP address cannot be checked that way (mysql2 sends no server name, and Node then checks
- * "localhost"): it is checked once connected, so only with a CA file, which an attacker cannot get
- * a certificate from; without one the connection is refused, since the password would be sent first.
+ * "localhost"): it is checked once connected, so only with a CA file, which limits who can receive
+ * the password first to holders of a certificate from that CA; without one the connection is refused.
  */
 export function mysqlTlsOptions(
   e: Endpoint,
